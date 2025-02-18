@@ -209,8 +209,8 @@ async def should_add_delay_for_human_input():
         for word in ["bank", "debit"]
     )
     default_state = "has_time_to_chat"
-    current_state = AppConfig().call_metadata.get("state_history", [default_state])[-1]
-    is_state_requiring_more_time = current_state in ["actual_mailing_address", "actual_email"]
+    state_to_check = AppConfig().call_metadata.get("state_to_check", default_state)
+    is_state_requiring_more_time = state_to_check in ["actual_mailing_address", "actual_email"]
     if in_bank_or_debit_flow is True or is_state_requiring_more_time is True:
         print("Starting 3 second delay for debit/bank or flow state requiring more time")
         await asyncio.sleep(2)
