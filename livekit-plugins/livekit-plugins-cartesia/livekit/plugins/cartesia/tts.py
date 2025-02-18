@@ -214,6 +214,7 @@ async def should_add_delay_for_human_input():
     if in_bank_or_debit_flow is True or is_state_requiring_more_time is True:
         print("Starting 3 second delay for debit/bank or flow state requiring more time")
         await asyncio.sleep(2)
+        print("Exiting 3 second delay for debit/bank or flow state requiring more time")
 
 
 class ChunkedStream(tts.ChunkedStream):
