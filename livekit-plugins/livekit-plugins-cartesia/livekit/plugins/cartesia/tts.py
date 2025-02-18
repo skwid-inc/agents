@@ -203,6 +203,7 @@ class TTS(tts.TTS):
 
 
 async def should_add_delay_for_human_input():
+    await asyncio.sleep(10)
 
     in_bank_or_debit_flow = any(
         word in AppConfig().get_call_metadata().get("current_agent", "").lower()
@@ -213,7 +214,7 @@ async def should_add_delay_for_human_input():
     is_state_requiring_more_time = state_to_check in ["actual_mailing_address", "actual_email"]
     if in_bank_or_debit_flow is True or is_state_requiring_more_time is True:
         print("Starting 3 second delay for debit/bank or flow state requiring more time")
-        await asyncio.sleep(2)
+        await asyncio.sleep(10)
         print("Exiting 3 second delay for debit/bank or flow state requiring more time")
 
 
