@@ -203,7 +203,7 @@ class TTS(tts.TTS):
 
 
 async def should_add_delay_for_human_input():
-    await asyncio.sleep(10)
+    await asyncio.sleep(5)
 
     in_bank_or_debit_flow = any(
         word in AppConfig().get_call_metadata().get("current_agent", "").lower()
