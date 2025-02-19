@@ -179,7 +179,11 @@ class TTS(tts.TTS):
     ) -> ChunkedStream:
         logging.info(f"Synthesize called with text: {text}")
 
-        if "Exeter Finance LLC" in text:
+        if (
+            "Exeter Finance LLC" in text
+            and "Dallas" not in text
+            and "Carrollton" not in text
+        ):
             self.update_options(speed="fast")
         elif "Por favor diga español" in text:
             self.update_options(
