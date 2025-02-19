@@ -187,6 +187,9 @@ class TTS(tts.TTS):
                 model="sonic-multilingual",
                 language="es",
             )
+        elif "Carrollton" in text or "Dallas" in text:
+            logging.info("Carrollton or Dallas detected, setting speed to slowest")
+            self.update_options(speed="slow")
         else:
             self.update_options(speed="normal")
 
@@ -198,10 +201,7 @@ class TTS(tts.TTS):
         text = text.replace("routing", "<<ˈr|aʊ|t|ɪ|ŋ|g|>>")
         text = text.replace("live agent", "<<'l|aɪ|v|>> agent")
         text = text.replace("GoFi", "<<ˈɡ|oʊ|f|aɪ|>>")
-        text = text.replace(
-            "3000 Kellway Drive, Suite 120, Carrollton, Texas, 75006",
-            "3000 Kellway Drive <pause> Suite 120 <pause> Carrollton <pause> Texas <pause> 75006",
-        )
+
         logging.info(f"Processed text: {text}")
         return ChunkedStream(
             tts=self,
