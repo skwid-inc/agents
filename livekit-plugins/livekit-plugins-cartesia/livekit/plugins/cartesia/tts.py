@@ -239,24 +239,22 @@ class ChunkedStream(tts.ChunkedStream):
 
     async def _run(self) -> None:
         logging.info(f"ChunkedStream _run with input text: {self._input_text}")
+        print(f"get_wav_if_available for {self._input_text}")
         filler_phrase_wav = get_wav_if_available(self._input_text)
+        print(f"filler_phrase_wav: {filler_phrase_wav}")
         if filler_phrase_wav:
-            await self._play_presynthesized_audio()
+            await self._play_presynthesized_audio(filler_phrase_wav)
         else:
             await self._synthesize_and_play_audio()
 
-    async def _play_presynthesized_audio(self) -> None:
+    async def _play_presynthesized_audio(self, wav_path: str) -> None:
         logging.info(
             f"ChunkedStream _run with input text for Presynthesized Audio: {self._input_text}"
         )
         request_id = utils.shortuuid()
 
         # Read the WAV file
-        # wav_path = get_wav_if_available(self._input_text)
-        wav_path = (
-            "initial_msg_audio/cartesia_v2-hello-am-i-speaking-with-brad-thompson.wav"
-        )
-        # wav_path = "wav_files/gtts_speech.wav"
+        wav_path = get_wav_if_available(self._input_text)
         audio_array, file_sample_rate = sf.read(str(wav_path), dtype="int16")
 
         logging.info(f"File sample rate: {file_sample_rate}")
