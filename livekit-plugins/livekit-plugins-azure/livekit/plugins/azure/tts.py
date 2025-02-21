@@ -264,6 +264,7 @@ class ChunkedStream(tts.ChunkedStream):
         print(f"filler_phrase_wav: {filler_phrase_wav}")
         if filler_phrase_wav:
             await self._play_presynthesized_audio(filler_phrase_wav)
+            return
 
         stream_callback = speechsdk.audio.PushAudioOutputStream(
             _PushAudioOutputStreamCallback(
