@@ -38,6 +38,9 @@ from livekit.agents import (
 from .log import logger
 from .models import TTSEncoding, TTSModels
 
+from app_config import AppConfig
+from helpers import replace_numbers_with_words_cartesia
+
 _Encoding = Literal["mp3", "pcm"]
 
 
@@ -82,7 +85,6 @@ DEFAULT_VOICE = Voice(
 
 API_BASE_URL_V1 = "https://api.elevenlabs.io/v1"
 AUTHORIZATION_HEADER = "xi-api-key"
-
 
 @dataclass
 class _TTSOptions:
@@ -200,13 +202,25 @@ class TTS(tts.TTS):
         self._opts.model = model or self._opts.model
         self._opts.voice = voice or self._opts.voice
         self._opts.language = language or self._opts.language
-
+    
     def synthesize(
         self,
         text: str,
         *,
         conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
     ) -> "ChunkedStream":
+        logger.info(f"Synthesize called with text: {text}")
+
+        text = replace_numbers_with_words_cartesia(text, lang=AppConfig().language)
+        text = text.replace("DETERMINISTIC", "")
+        text = text.replace("past due", "past-due")
+        text = text.replace("processing fees on", "processing-fees-on")
+        text = text.replace("GAP", "gap")
+        text = text.replace("routing", "<<ˈr|aʊ|t|ɪ|ŋ|g|>>")
+        text = text.replace("live agent", "<<'l|aɪ|v|>> agent")
+        text = text.replace("GoFi", "<<ˈɡ|oʊ|f|aɪ|>>")
+
+        logger.info(f"Processed text: {text}")
         return ChunkedStream(
             tts=self,
             input_text=text,
