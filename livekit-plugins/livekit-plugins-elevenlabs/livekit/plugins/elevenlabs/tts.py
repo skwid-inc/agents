@@ -64,6 +64,7 @@ class VoiceSettings:
     similarity_boost: float  # [0.0 - 1.0]
     style: float | None = None  # [0.0 - 1.0]
     use_speaker_boost: bool | None = False
+    speed: float | None = None  # [0.7 - 1.2]
 
 
 @dataclass
@@ -72,6 +73,7 @@ class Voice:
     name: str
     category: str
     settings: VoiceSettings | None = None
+    speed: float | None = None
 
 
 DEFAULT_VOICE = Voice(
@@ -79,7 +81,7 @@ DEFAULT_VOICE = Voice(
     name="Bella",
     category="premade",
     settings=VoiceSettings(
-        stability=0.71, similarity_boost=0.5, style=0.0, use_speaker_boost=True
+        stability=0.71, similarity_boost=0.5, style=0.0, use_speaker_boost=True, speed=1.0
     ),
 )
 
@@ -192,6 +194,7 @@ class TTS(tts.TTS):
         voice: Voice = DEFAULT_VOICE,
         model: TTSModels | str = "eleven_turbo_v2_5",
         language: str | None = None,
+        speed: float | None = None,
     ) -> None:
         """
         Args:
@@ -202,7 +205,9 @@ class TTS(tts.TTS):
         self._opts.model = model or self._opts.model
         self._opts.voice = voice or self._opts.voice
         self._opts.language = language or self._opts.language
-    
+        if speed is not None:
+            self._opts.voice.settings.speed = speed
+
     def synthesize(
         self,
         text: str,
@@ -210,6 +215,24 @@ class TTS(tts.TTS):
         conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
     ) -> "ChunkedStream":
         logger.info(f"Synthesize called with text: {text}")
+
+        if (
+            "Exeter Finance LLC" in text
+            and "Dallas" not in text
+            and "Carrollton" not in text
+        ):
+            self.update_options(speed=1.2)
+        elif "Por favor diga español" in text:
+            self.update_options(
+                voice="db832ebd-3cb6-42e7-9d47-912b425adbaa",
+                model="sonic-multilingual",
+                language="es",
+            )
+        elif "Carrollton" in text or "Dallas" in text:
+            logger.info("Carrollton or Dallas detected, setting speed to slowest")
+            self.update_options(speed=0.7)
+        else:
+            self.update_options(speed=1.0)
 
         text = replace_numbers_with_words_cartesia(text, lang=AppConfig().language)
         text = text.replace("DETERMINISTIC", "")
