@@ -24,6 +24,9 @@ from dataclasses import dataclass
 from typing import Any
 
 import aiohttp
+import numpy as np
+import soundfile as sf
+from filler_phrases import get_wav_if_available
 from livekit import rtc
 from livekit.agents import (
     DEFAULT_API_CONNECT_OPTIONS,
@@ -35,6 +38,7 @@ from livekit.agents import (
     tts,
     utils,
 )
+from scipy import signal
 
 from .log import logger
 from .models import (
@@ -243,6 +247,16 @@ class ChunkedStream(tts.ChunkedStream):
 
     async def _run(self) -> None:
         logging.info(f"ChunkedStream _run with input text: {self._input_text}")
+        print(f"get_wav_if_available for {self._input_text}")
+        filler_phrase_wav = get_wav_if_available(self._input_text)
+        print(f"filler_phrase_wav: {filler_phrase_wav}")
+        if filler_phrase_wav:
+            await self._play_presynthesized_audio(filler_phrase_wav)
+            return
+
+        logging.info(
+            f"ChunkedStream _run with input text for Audio Synthesis: {self._input_text}"
+        )
         request_id = utils.shortuuid()
         bstream = utils.audio.AudioByteStream(
             sample_rate=self._opts.sample_rate, num_channels=NUM_CHANNELS
@@ -289,7 +303,7 @@ class ChunkedStream(tts.ChunkedStream):
                     self._event_ch.send_nowait(
                         tts.SynthesizedAudio(request_id=request_id, frame=frame)
                     )
-            logging.info(f"ChunkedStream _run completed")
+            logging.info(f"ChunkedStream _run completed for Audio Synthesis")
         except asyncio.TimeoutError as e:
             raise APITimeoutError() from e
         except aiohttp.ClientResponseError as e:
@@ -301,6 +315,67 @@ class ChunkedStream(tts.ChunkedStream):
             ) from e
         except Exception as e:
             raise APIConnectionError() from e
+
+    async def _play_presynthesized_audio(self, wav_path: str) -> None:
+        logging.info(
+            f"ChunkedStream _run with input text for Presynthesized Audio: {self._input_text}"
+        )
+        request_id = utils.shortuuid()
+
+        # Read the WAV file
+        wav_path = get_wav_if_available(self._input_text)
+        audio_array, file_sample_rate = sf.read(str(wav_path), dtype="int16")
+
+        logging.info(f"File sample rate: {file_sample_rate}")
+        logging.info(
+            f"WAV file channels: {1 if audio_array.ndim == 1 else audio_array.shape[1]}"
+        )
+        logging.info(f"Target sample rate: {self._opts.sample_rate}")
+
+        # Convert stereo to mono if needed
+        if audio_array.ndim == 2 and audio_array.shape[1] == 2:
+            logging.info("Converting stereo to mono")
+            audio_array = audio_array.mean(axis=1)
+
+        # Resample if needed
+        if file_sample_rate != self._opts.sample_rate:
+            logging.info(
+                f"Resampling from {file_sample_rate} to {self._opts.sample_rate}"
+            )
+            # Calculate number of samples for the target sample rate
+            num_samples = int(
+                len(audio_array) * self._opts.sample_rate / file_sample_rate
+            )
+            audio_array = signal.resample(audio_array, num_samples)
+
+        # Process audio in chunks
+        samples_per_channel = 960  # Standard frame size for audio processing
+        for i in range(0, len(audio_array), samples_per_channel):
+            chunk = audio_array[i : i + samples_per_channel]
+
+            # Pad the last chunk if needed
+            if len(chunk) < samples_per_channel:
+                chunk = np.pad(chunk, (0, samples_per_channel - len(chunk)))
+
+            # Apply soft clipping and ensure int16 format
+            chunk = np.tanh(chunk / 32768.0) * 32768.0
+            chunk = np.round(chunk).astype(np.int16)
+
+            # Create and send the audio frame with matching parameters
+            frame = rtc.AudioFrame(
+                data=chunk.tobytes(),
+                sample_rate=self._opts.sample_rate,  # Use the TTS instance's sample rate
+                samples_per_channel=samples_per_channel,
+                num_channels=NUM_CHANNELS,  # Make sure this matches the expected number of channels
+            )
+            self._event_ch.send_nowait(
+                tts.SynthesizedAudio(
+                    request_id=request_id,
+                    frame=frame,
+                )
+            )
+
+        logging.info(f"ChunkedStream _run completed for Presynthesized Audio")
 
 
 class SynthesizeStream(tts.SynthesizeStream):
