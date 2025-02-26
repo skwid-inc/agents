@@ -100,8 +100,8 @@ NUM_CHANNELS = 1
 @dataclass
 class _TTSOptions:
     api_key: str
-    voice: Voice | None = (None,)
-    model: TTSModels | str | None = (None,)
+    voice: Voice
+    model: TTSModels | str
     language: str | None
     base_url: str
     encoding: TTSEncoding
