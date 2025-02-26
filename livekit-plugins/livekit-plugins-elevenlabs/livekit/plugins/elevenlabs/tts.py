@@ -23,6 +23,11 @@ from dataclasses import dataclass
 from typing import Any, List, Literal
 
 import aiohttp
+import numpy as np
+import soundfile as sf
+from app_config import AppConfig
+from filler_phrases import get_wav_if_available
+from helpers import replace_numbers_with_words_cartesia
 from livekit import rtc
 from livekit.agents import (
     DEFAULT_API_CONNECT_OPTIONS,
@@ -34,12 +39,10 @@ from livekit.agents import (
     tts,
     utils,
 )
+from scipy import signal
 
 from .log import logger
 from .models import TTSEncoding, TTSModels
-
-from app_config import AppConfig
-from helpers import replace_numbers_with_words_cartesia
 
 _Encoding = Literal["mp3", "pcm"]
 
@@ -81,18 +84,24 @@ DEFAULT_VOICE = Voice(
     name="Bella",
     category="premade",
     settings=VoiceSettings(
-        stability=0.71, similarity_boost=0.5, style=0.0, use_speaker_boost=True, speed=1.0
+        stability=0.71,
+        similarity_boost=0.5,
+        style=0.0,
+        use_speaker_boost=True,
+        speed=1.0,
     ),
 )
 
 API_BASE_URL_V1 = "https://api.elevenlabs.io/v1"
 AUTHORIZATION_HEADER = "xi-api-key"
+NUM_CHANNELS = 1
+
 
 @dataclass
 class _TTSOptions:
     api_key: str
-    voice: Voice
-    model: TTSModels | str
+    voice: Voice | None = (None,)
+    model: TTSModels | str | None = (None,)
     language: str | None
     base_url: str
     encoding: TTSEncoding
@@ -234,6 +243,7 @@ class TTS(tts.TTS):
         else:
             self.update_options(speed=1.0)
 
+        raw_input_text = text
         text = replace_numbers_with_words_cartesia(text, lang=AppConfig().language)
         text = text.replace("DETERMINISTIC", "")
 
@@ -241,6 +251,7 @@ class TTS(tts.TTS):
         return ChunkedStream(
             tts=self,
             input_text=text,
+            raw_input_text=raw_input_text,
             conn_options=conn_options,
             opts=self._opts,
             session=self._ensure_session(),
@@ -265,16 +276,26 @@ class ChunkedStream(tts.ChunkedStream):
         *,
         tts: TTS,
         input_text: str,
+        raw_input_text: str,
         opts: _TTSOptions,
         conn_options: APIConnectOptions,
         session: aiohttp.ClientSession,
     ) -> None:
         super().__init__(tts=tts, input_text=input_text, conn_options=conn_options)
         self._opts, self._session = opts, session
+        self._raw_input_text = raw_input_text
         if _encoding_from_format(self._opts.encoding) == "mp3":
             self._mp3_decoder = utils.codecs.Mp3StreamDecoder()
 
     async def _run(self) -> None:
+        logger.info(f"ChunkedStream _run with input text: {self._input_text}")
+        print(f"get_wav_if_available for {self._raw_input_text}")
+        filler_phrase_wav = get_wav_if_available(self._raw_input_text)
+        print(f"filler_phrase_wav: {filler_phrase_wav}")
+        if filler_phrase_wav:
+            await self._play_presynthesized_audio(filler_phrase_wav)
+            return
+
         request_id = utils.shortuuid()
         bstream = utils.audio.AudioByteStream(
             sample_rate=self._opts.sample_rate, num_channels=1
@@ -339,6 +360,65 @@ class ChunkedStream(tts.ChunkedStream):
             ) from e
         except Exception as e:
             raise APIConnectionError() from e
+
+    async def _play_presynthesized_audio(self, wav_path: str) -> None:
+        logger.info(
+            f"ChunkedStream _run with input text for Presynthesized Audio: {self._input_text}"
+        )
+        request_id = utils.shortuuid()
+
+        audio_array, file_sample_rate = sf.read(str(wav_path), dtype="int16")
+
+        logger.info(f"File sample rate: {file_sample_rate}")
+        logger.info(
+            f"WAV file channels: {1 if audio_array.ndim == 1 else audio_array.shape[1]}"
+        )
+        logger.info(f"Target sample rate: {self._opts.sample_rate}")
+
+        # Convert stereo to mono if needed
+        if audio_array.ndim == 2 and audio_array.shape[1] == 2:
+            logger.info("Converting stereo to mono")
+            audio_array = audio_array.mean(axis=1)
+
+        # Resample if needed
+        if file_sample_rate != self._opts.sample_rate:
+            logger.info(
+                f"Resampling from {file_sample_rate} to {self._opts.sample_rate}"
+            )
+            # Calculate number of samples for the target sample rate
+            num_samples = int(
+                len(audio_array) * self._opts.sample_rate / file_sample_rate
+            )
+            audio_array = signal.resample(audio_array, num_samples)
+
+        # Process audio in chunks
+        samples_per_channel = 960  # Standard frame size for audio processing
+        for i in range(0, len(audio_array), samples_per_channel):
+            chunk = audio_array[i : i + samples_per_channel]
+
+            # Pad the last chunk if needed
+            if len(chunk) < samples_per_channel:
+                chunk = np.pad(chunk, (0, samples_per_channel - len(chunk)))
+
+            # Apply soft clipping and ensure int16 format
+            chunk = np.tanh(chunk / 32768.0) * 32768.0
+            chunk = np.round(chunk).astype(np.int16)
+
+            # Create and send the audio frame with matching parameters
+            frame = rtc.AudioFrame(
+                data=chunk.tobytes(),
+                sample_rate=self._opts.sample_rate,  # Use the TTS instance's sample rate
+                samples_per_channel=samples_per_channel,
+                num_channels=NUM_CHANNELS,  # Make sure this matches the expected number of channels
+            )
+            self._event_ch.send_nowait(
+                tts.SynthesizedAudio(
+                    request_id=request_id,
+                    frame=frame,
+                )
+            )
+
+        logger.info(f"ChunkedStream _run completed for Presynthesized Audio")
 
 
 class SynthesizeStream(tts.SynthesizeStream):
@@ -426,9 +506,11 @@ class SynthesizeStream(tts.SynthesizeStream):
         init_pkt = dict(
             text=" ",
             try_trigger_generation=True,
-            voice_settings=_strip_nones(dataclasses.asdict(self._opts.voice.settings))
-            if self._opts.voice.settings
-            else None,
+            voice_settings=(
+                _strip_nones(dataclasses.asdict(self._opts.voice.settings))
+                if self._opts.voice.settings
+                else None
+            ),
             generation_config=dict(
                 chunk_length_schedule=self._opts.chunk_length_schedule
             ),
