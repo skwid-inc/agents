@@ -27,7 +27,7 @@ import numpy as np
 import soundfile as sf
 from app_config import AppConfig
 from filler_phrases import get_wav_if_available
-from helpers import replace_numbers_with_words_cartesia
+from helpers import normalize_text_for_elevenlabs
 from livekit import rtc
 from livekit.agents import (
     DEFAULT_API_CONNECT_OPTIONS,
@@ -241,11 +241,10 @@ class TTS(tts.TTS):
             logger.info("Carrollton or Dallas detected, setting speed to slowest")
             self.update_options(speed=0.7)
         else:
-            self.update_options(speed=1.0)
+            self.update_options(speed=0.95)
 
         raw_input_text = text
-        text = replace_numbers_with_words_cartesia(text, lang=AppConfig().language)
-        text = text.replace("DETERMINISTIC", "")
+        text = normalize_text_for_elevenlabs(text)
 
         logger.info(f"Processed text: {text}")
         return ChunkedStream(
