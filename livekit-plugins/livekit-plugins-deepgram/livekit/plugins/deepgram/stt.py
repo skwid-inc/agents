@@ -260,6 +260,7 @@ class STT(stt.STT):
         filler_words: bool | None = None,
         keywords: list[Tuple[str, float]] | None = None,
         profanity_filter: bool | None = None,
+        base_url: str | None = None,
     ):
         if language is not None:
             self._opts.language = language
@@ -283,6 +284,8 @@ class STT(stt.STT):
             self._opts.keywords = keywords
         if profanity_filter is not None:
             self._opts.profanity_filter = profanity_filter
+        if base_url is not None:
+            self._base_url = base_url
 
         for stream in self._streams:
             stream.update_options(
@@ -297,6 +300,7 @@ class STT(stt.STT):
                 filler_words=filler_words,
                 keywords=keywords,
                 profanity_filter=profanity_filter,
+                base_url=base_url,
             )
 
     def _sanitize_options(self, *, language: str | None = None) -> STTOptions:
@@ -527,9 +531,9 @@ class SpeechStream(stt.SpeechStream):
             "vad_events": True,
             "sample_rate": self._opts.sample_rate,
             "channels": self._opts.num_channels,
-            "endpointing": False
-            if self._opts.endpointing_ms == 0
-            else self._opts.endpointing_ms,
+            "endpointing": (
+                False if self._opts.endpointing_ms == 0 else self._opts.endpointing_ms
+            ),
             "filler_words": self._opts.filler_words,
             "keywords": self._opts.keywords,
             "profanity_filter": self._opts.profanity_filter,
