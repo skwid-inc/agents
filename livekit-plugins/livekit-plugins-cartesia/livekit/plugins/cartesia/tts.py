@@ -26,7 +26,6 @@ from typing import Any
 import aiohttp
 import numpy as np
 import soundfile as sf
-from filler_phrases import get_wav_if_available
 from livekit import rtc
 from livekit.agents import (
     DEFAULT_API_CONNECT_OPTIONS,
@@ -39,6 +38,8 @@ from livekit.agents import (
     utils,
 )
 from scipy import signal
+
+from filler_phrases import get_wav_if_available
 
 from .log import logger
 from .models import (
@@ -183,11 +184,7 @@ class TTS(tts.TTS):
     ) -> ChunkedStream:
         logging.info(f"Synthesize called with text: {text}")
 
-        if (
-            "Exeter Finance LLC" in text
-            and "Dallas" not in text
-            and "Carrollton" not in text
-        ):
+        if "Exeter Finance LLC" in text and "Dallas" not in text and "Carrollton" not in text:
             self.update_options(speed="fast")
         elif "Por favor diga español" in text:
             self.update_options(
@@ -209,6 +206,7 @@ class TTS(tts.TTS):
         text = text.replace("routing", "<<ˈr|aʊ|t|ɪ|ŋ|g|>>")
         text = text.replace("live agent", "<<'l|aɪ|v|>> agent")
         text = text.replace("GoFi", "<<ˈɡ|oʊ|f|aɪ|>>")
+        text = text.replace("Ally", "al eye")
 
         logging.info(f"Processed text: {text}")
         return ChunkedStream(
@@ -254,9 +252,7 @@ class ChunkedStream(tts.ChunkedStream):
             await self._play_presynthesized_audio(filler_phrase_wav)
             return
 
-        logging.info(
-            f"ChunkedStream _run with input text for Audio Synthesis: {self._input_text}"
-        )
+        logging.info(f"ChunkedStream _run with input text for Audio Synthesis: {self._input_text}")
         request_id = utils.shortuuid()
         bstream = utils.audio.AudioByteStream(
             sample_rate=self._opts.sample_rate, num_channels=NUM_CHANNELS
@@ -270,9 +266,7 @@ class ChunkedStream(tts.ChunkedStream):
             API_VERSION_HEADER: API_VERSION,
         }
 
-        logging.info(
-            f"Sending request to Cartesia bytes endpoint with headers: {headers}"
-        )
+        logging.info(f"Sending request to Cartesia bytes endpoint with headers: {headers}")
 
         if not AppConfig().get_call_metadata().get("time_of_first_cartesia_synthesis"):
             AppConfig().get_call_metadata().update(
@@ -327,9 +321,7 @@ class ChunkedStream(tts.ChunkedStream):
         audio_array, file_sample_rate = sf.read(str(wav_path), dtype="int16")
 
         logging.info(f"File sample rate: {file_sample_rate}")
-        logging.info(
-            f"WAV file channels: {1 if audio_array.ndim == 1 else audio_array.shape[1]}"
-        )
+        logging.info(f"WAV file channels: {1 if audio_array.ndim == 1 else audio_array.shape[1]}")
         logging.info(f"Target sample rate: {self._opts.sample_rate}")
 
         # Convert stereo to mono if needed
@@ -339,13 +331,9 @@ class ChunkedStream(tts.ChunkedStream):
 
         # Resample if needed
         if file_sample_rate != self._opts.sample_rate:
-            logging.info(
-                f"Resampling from {file_sample_rate} to {self._opts.sample_rate}"
-            )
+            logging.info(f"Resampling from {file_sample_rate} to {self._opts.sample_rate}")
             # Calculate number of samples for the target sample rate
-            num_samples = int(
-                len(audio_array) * self._opts.sample_rate / file_sample_rate
-            )
+            num_samples = int(len(audio_array) * self._opts.sample_rate / file_sample_rate)
             audio_array = signal.resample(audio_array, num_samples)
 
         # Process audio in chunks
@@ -490,9 +478,7 @@ class SynthesizeStream(tts.SynthesizeStream):
         ws: aiohttp.ClientWebSocketResponse | None = None
 
         try:
-            ws = await asyncio.wait_for(
-                self._session.ws_connect(url), self._conn_options.timeout
-            )
+            ws = await asyncio.wait_for(self._session.ws_connect(url), self._conn_options.timeout)
 
             tasks = [
                 asyncio.create_task(_input_task()),
