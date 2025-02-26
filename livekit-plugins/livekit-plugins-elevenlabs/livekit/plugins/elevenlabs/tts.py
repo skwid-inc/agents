@@ -191,8 +191,8 @@ class TTS(tts.TTS):
     def update_options(
         self,
         *,
-        voice: Voice = DEFAULT_VOICE,
-        model: TTSModels | str = "eleven_turbo_v2_5",
+        voice: Voice | None = None,
+        model: TTSModels | str | None = None,
         language: str | None = None,
         speed: float | None = None,
     ) -> None:
