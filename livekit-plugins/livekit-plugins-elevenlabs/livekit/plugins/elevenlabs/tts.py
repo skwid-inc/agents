@@ -472,8 +472,7 @@ class SynthesizeStream(tts.SynthesizeStream):
 
                     normalized_data = self._tts.normalize_for_synthesis(input)
                     logger.info(
-                        f"Normalized text sent to el
-                        evenlabs word_stream: {normalized_data}"
+                        f"Normalized text sent to elevenlabs word_stream: {normalized_data}"
                     )
                     word_stream.push_text(input)
                 elif isinstance(input, self._FlushSentinel):
