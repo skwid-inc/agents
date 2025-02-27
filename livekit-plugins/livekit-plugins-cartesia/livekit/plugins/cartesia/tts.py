@@ -62,7 +62,7 @@ API_VERSION = "2024-06-10"
 NUM_CHANNELS = 1
 BUFFERED_WORDS_COUNT = 8
 from app_config import AppConfig
-from helpers import replace_numbers_with_words_cartesia
+from helpers import normalize_website_url_if_needed, replace_numbers_with_words_cartesia
 
 
 @dataclass
@@ -202,6 +202,7 @@ class TTS(tts.TTS):
             self.update_options(speed="normal")
 
         text = replace_numbers_with_words_cartesia(text, lang=AppConfig().language)
+        text = normalize_website_url_if_needed(text)
         text = text.replace("DETERMINISTIC", "")
         text = text.replace("past due", "past-due")
         text = text.replace("processing fees on", "processing-fees-on")
@@ -210,6 +211,7 @@ class TTS(tts.TTS):
         text = text.replace("live agent", "<<'l|aɪ|v|>> agent")
         text = text.replace("GoFi", "<<ˈɡ|oʊ|f|aɪ|>>")
         text = text.replace("Ally", "al-eye")
+        text = text.replace("ACIpayonline", "ACI payonline")
 
         logging.info(f"Processed text: {text}")
         return ChunkedStream(
