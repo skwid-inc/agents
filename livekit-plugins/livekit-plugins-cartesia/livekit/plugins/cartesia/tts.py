@@ -223,12 +223,107 @@ class TTS(tts.TTS):
     def stream(
         self, *, conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS
     ) -> "SynthesizeStream":
+        logging.info(f"TTS stream called with opts: {self._opts}")
         return SynthesizeStream(
             tts=self,
             conn_options=conn_options,
             opts=self._opts,
             session=self._ensure_session(),
         )
+
+    def normalize_for_synthesis(self, text: str) -> str:
+        if (
+            "Exeter Finance LLC" in text
+            and "Dallas" not in text
+            and "Carrollton" not in text
+        ):
+            self._opts.speed = "fast"
+        elif "Por favor diga español" in text:
+            self._opts.voice = "db832ebd-3cb6-42e7-9d47-912b425adbaa"
+            self._opts.model = "sonic-multilingual"
+            self._opts.language = "es"
+        elif "Carrollton" in text or "Dallas" in text:
+            logging.info("Carrollton or Dallas detected, setting speed to slowest")
+            self._opts.speed = "slow"
+        else:
+            self._opts.speed = "normal"
+
+        text = replace_numbers_with_words_cartesia(text, lang=AppConfig().language)
+        text = text.replace("DETERMINISTIC", "")
+        text = text.replace("past due", "past-due")
+        text = text.replace("processing fees on", "processing-fees-on")
+        text = text.replace("GAP", "gap")
+        text = text.replace("routing", "<<ˈr|aʊ|t|ɪ|ŋ|g|>>")
+        text = text.replace("live agent", "<<'l|aɪ|v|>> agent")
+        text = text.replace("GoFi", "<<ˈɡ|oʊ|f|aɪ|>>")
+        text = text.replace("Ally", "al-eye")
+        return text
+
+    async def _play_presynthesized_audio(
+        self, wav_path: str, event_ch, input_text: str
+    ) -> None:
+        logging.info(f"Playing Presynthesized Audio: {input_text}")
+        request_id = utils.shortuuid()
+
+        # Read the WAV file
+        wav_path = get_wav_if_available(input_text)
+        audio_array, file_sample_rate = sf.read(str(wav_path), dtype="int16")
+
+        logging.info(f"File sample rate: {file_sample_rate}")
+        logging.info(
+            f"WAV file channels: {1 if audio_array.ndim == 1 else audio_array.shape[1]}"
+        )
+        logging.info(f"Target sample rate: {self._opts.sample_rate}")
+
+        # Convert stereo to mono if needed
+        if audio_array.ndim == 2 and audio_array.shape[1] == 2:
+            logging.info("Converting stereo to mono")
+            audio_array = audio_array.mean(axis=1)
+
+        # Resample if needed
+        if file_sample_rate != self._opts.sample_rate:
+            logging.info(
+                f"Resampling from {file_sample_rate} to {self._opts.sample_rate}"
+            )
+            # Calculate number of samples for the target sample rate
+            num_samples = int(
+                len(audio_array) * self._opts.sample_rate / file_sample_rate
+            )
+            audio_array = signal.resample(audio_array, num_samples)
+
+        # Process audio in chunks
+        samples_per_channel = 960  # Standard frame size for audio processing
+        for i in range(0, len(audio_array), samples_per_channel):
+            chunk = audio_array[i : i + samples_per_channel]
+
+            # Pad the last chunk if needed
+            if len(chunk) < samples_per_channel:
+                chunk = np.pad(chunk, (0, samples_per_channel - len(chunk)))
+
+            # Apply soft clipping and ensure int16 format
+            chunk = np.tanh(chunk / 32768.0) * 32768.0
+            chunk = np.round(chunk).astype(np.int16)
+
+            # Create and send the audio frame with matching parameters
+            frame = rtc.AudioFrame(
+                data=chunk.tobytes(),
+                sample_rate=self._opts.sample_rate,  # Use the TTS instance's sample rate
+                samples_per_channel=samples_per_channel,
+                num_channels=NUM_CHANNELS,  # Make sure this matches the expected number of channels
+            )
+            # Only set is_final to True for the last frame
+            is_final = i + samples_per_channel >= len(audio_array)
+            event_ch.send_nowait(
+                tts.SynthesizedAudio(
+                    request_id=request_id,
+                    # segment_id=request_id,
+                    frame=frame,
+                    # is_final=is_final,
+                )
+            )
+
+        logging.info(f"ChunkedStream _run completed for Presynthesized Audio")
+        return
 
 
 class ChunkedStream(tts.ChunkedStream):
@@ -252,19 +347,22 @@ class ChunkedStream(tts.ChunkedStream):
         filler_phrase_wav = get_wav_if_available(self._input_text)
         print(f"filler_phrase_wav: {filler_phrase_wav}")
         if filler_phrase_wav:
-            await self._play_presynthesized_audio(filler_phrase_wav)
+            await self._tts._play_presynthesized_audio(
+                filler_phrase_wav, self._event_ch, self._input_text
+            )
             return
 
         logging.info(
             f"ChunkedStream _run with input text for Audio Synthesis: {self._input_text}"
         )
+        normalized_text = self._tts.normalize_for_synthesis(self._input_text)
         request_id = utils.shortuuid()
         bstream = utils.audio.AudioByteStream(
             sample_rate=self._opts.sample_rate, num_channels=NUM_CHANNELS
         )
 
         json = _to_cartesia_options(self._opts)
-        json["transcript"] = self._input_text
+        json["transcript"] = normalized_text
 
         headers = {
             API_AUTH_HEADER: self._opts.api_key,
@@ -317,67 +415,6 @@ class ChunkedStream(tts.ChunkedStream):
         except Exception as e:
             raise APIConnectionError() from e
 
-    async def _play_presynthesized_audio(self, wav_path: str) -> None:
-        logging.info(
-            f"ChunkedStream _run with input text for Presynthesized Audio: {self._input_text}"
-        )
-        request_id = utils.shortuuid()
-
-        # Read the WAV file
-        wav_path = get_wav_if_available(self._input_text)
-        audio_array, file_sample_rate = sf.read(str(wav_path), dtype="int16")
-
-        logging.info(f"File sample rate: {file_sample_rate}")
-        logging.info(
-            f"WAV file channels: {1 if audio_array.ndim == 1 else audio_array.shape[1]}"
-        )
-        logging.info(f"Target sample rate: {self._opts.sample_rate}")
-
-        # Convert stereo to mono if needed
-        if audio_array.ndim == 2 and audio_array.shape[1] == 2:
-            logging.info("Converting stereo to mono")
-            audio_array = audio_array.mean(axis=1)
-
-        # Resample if needed
-        if file_sample_rate != self._opts.sample_rate:
-            logging.info(
-                f"Resampling from {file_sample_rate} to {self._opts.sample_rate}"
-            )
-            # Calculate number of samples for the target sample rate
-            num_samples = int(
-                len(audio_array) * self._opts.sample_rate / file_sample_rate
-            )
-            audio_array = signal.resample(audio_array, num_samples)
-
-        # Process audio in chunks
-        samples_per_channel = 960  # Standard frame size for audio processing
-        for i in range(0, len(audio_array), samples_per_channel):
-            chunk = audio_array[i : i + samples_per_channel]
-
-            # Pad the last chunk if needed
-            if len(chunk) < samples_per_channel:
-                chunk = np.pad(chunk, (0, samples_per_channel - len(chunk)))
-
-            # Apply soft clipping and ensure int16 format
-            chunk = np.tanh(chunk / 32768.0) * 32768.0
-            chunk = np.round(chunk).astype(np.int16)
-
-            # Create and send the audio frame with matching parameters
-            frame = rtc.AudioFrame(
-                data=chunk.tobytes(),
-                sample_rate=self._opts.sample_rate,  # Use the TTS instance's sample rate
-                samples_per_channel=samples_per_channel,
-                num_channels=NUM_CHANNELS,  # Make sure this matches the expected number of channels
-            )
-            self._event_ch.send_nowait(
-                tts.SynthesizedAudio(
-                    request_id=request_id,
-                    frame=frame,
-                )
-            )
-
-        logging.info(f"ChunkedStream _run completed for Presynthesized Audio")
-
 
 class SynthesizeStream(tts.SynthesizeStream):
     def __init__(
@@ -415,12 +452,29 @@ class SynthesizeStream(tts.SynthesizeStream):
             await ws.send_str(json.dumps(end_pkt))
 
         async def _input_task():
+            print(f"Input channel received for input task: {self._input_ch}")
             logging.info("Starting input task")
             async for data in self._input_ch:
+                logging.info(f"Input task received data: {data}")
                 if isinstance(data, self._FlushSentinel):
                     self._sent_tokenizer_stream.flush()
                     continue
-                self._sent_tokenizer_stream.push_text(data)
+
+                filler_phrase_wav = get_wav_if_available(data)
+                if filler_phrase_wav:
+                    logging.info(f"Playing presynthesized audio for: {data}")
+                    await self._tts._play_presynthesized_audio(
+                        filler_phrase_wav, self._event_ch, data
+                    )
+                    continue  # Skip to next input if we played presynthesized audio
+
+                logger.info(f"Pushing text to sent_tokenizer_stream: {data}")
+
+                normalized_data = self._tts.normalize_for_synthesis(data)
+                logger.info(
+                    f"Normalized text sent to tokenizer_stream: {normalized_data}"
+                )
+                self._sent_tokenizer_stream.push_text(normalized_data)
             self._sent_tokenizer_stream.end_input()
 
         async def _recv_task(ws: aiohttp.ClientWebSocketResponse):
