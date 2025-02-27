@@ -182,38 +182,6 @@ class TTS(tts.TTS):
         conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
     ) -> ChunkedStream:
         logging.info(f"Synthesize called with text: {text}")
-
-        if (
-            "Exeter Finance LLC" in text
-            and "Dallas" not in text
-            and "Carrollton" not in text
-        ):
-            self.update_options(speed="fast")
-        elif "Por favor diga español" in text:
-            self.update_options(
-                voice="db832ebd-3cb6-42e7-9d47-912b425adbaa",
-                model="sonic-multilingual",
-                language="es",
-            )
-        elif "Carrollton" in text or "Dallas" in text:
-            logging.info("Carrollton or Dallas detected, setting speed to slowest")
-            self.update_options(speed="slow")
-        else:
-            self.update_options(speed="normal")
-
-        text = replace_numbers_with_words_cartesia(text, lang=AppConfig().language)
-        text = normalize_website_url_if_needed(text)
-        text = text.replace("DETERMINISTIC", "")
-        text = text.replace("past due", "past-due")
-        text = text.replace("processing fees on", "processing-fees-on")
-        text = text.replace("GAP", "gap")
-        text = text.replace("routing", "<<ˈr|aʊ|t|ɪ|ŋ|g|>>")
-        text = text.replace("live agent", "<<'l|aɪ|v|>> agent")
-        text = text.replace("GoFi", "<<ˈɡ|oʊ|f|aɪ|>>")
-        text = text.replace("Ally", "al-eye")
-        text = text.replace("ACIpayonline", "ACI payonline")
-
-        logging.info(f"Processed text: {text}")
         return ChunkedStream(
             tts=self,
             input_text=text,
@@ -239,16 +207,19 @@ class TTS(tts.TTS):
             and "Dallas" not in text
             and "Carrollton" not in text
         ):
-            self._opts.speed = "fast"
+            self.update_options(speed="fast")
         elif "Por favor diga español" in text:
-            self._opts.voice = "db832ebd-3cb6-42e7-9d47-912b425adbaa"
-            self._opts.model = "sonic-multilingual"
-            self._opts.language = "es"
+            # These options are updated after the language switch consent flow depending on the language
+            self.update_options(
+                voice="db832ebd-3cb6-42e7-9d47-912b425adbaa",
+                model="sonic-multilingual",
+                language="es",
+            )
         elif "Carrollton" in text or "Dallas" in text:
             logging.info("Carrollton or Dallas detected, setting speed to slowest")
-            self._opts.speed = "slow"
+            self.update_options(speed="slow")
         else:
-            self._opts.speed = "normal"
+            self.update_options(speed="normal")
 
         text = replace_numbers_with_words_cartesia(text, lang=AppConfig().language)
         text = text.replace("DETERMINISTIC", "")
@@ -259,6 +230,8 @@ class TTS(tts.TTS):
         text = text.replace("live agent", "<<'l|aɪ|v|>> agent")
         text = text.replace("GoFi", "<<ˈɡ|oʊ|f|aɪ|>>")
         text = text.replace("Ally", "al-eye")
+        text = text.replace("ACIpayonline", "ACI payonline")
+
         return text
 
     async def _play_presynthesized_audio(
@@ -313,18 +286,14 @@ class TTS(tts.TTS):
                 samples_per_channel=samples_per_channel,
                 num_channels=NUM_CHANNELS,  # Make sure this matches the expected number of channels
             )
-            # Only set is_final to True for the last frame
-            is_final = i + samples_per_channel >= len(audio_array)
             event_ch.send_nowait(
                 tts.SynthesizedAudio(
                     request_id=request_id,
-                    # segment_id=request_id,
                     frame=frame,
-                    # is_final=is_final,
                 )
             )
 
-        logging.info(f"ChunkedStream _run completed for Presynthesized Audio")
+        logger.info(f"Sent Presynthesized Audio to event channel")
         return
 
 

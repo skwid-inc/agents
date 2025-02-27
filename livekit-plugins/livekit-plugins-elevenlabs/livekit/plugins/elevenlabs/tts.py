@@ -225,32 +225,9 @@ class TTS(tts.TTS):
     ) -> "ChunkedStream":
         logger.info(f"Synthesize called with text: {text}")
 
-        if (
-            "Exeter Finance LLC" in text
-            and "Dallas" not in text
-            and "Carrollton" not in text
-        ):
-            self.update_options(speed=1.2)
-        elif "Por favor diga español" in text:
-            self.update_options(
-                voice="db832ebd-3cb6-42e7-9d47-912b425adbaa",
-                model="sonic-multilingual",
-                language="es",
-            )
-        elif "Carrollton" in text or "Dallas" in text:
-            logger.info("Carrollton or Dallas detected, setting speed to slowest")
-            self.update_options(speed=0.7)
-        else:
-            self.update_options(speed=0.95)
-
-        raw_input_text = text
-        text = normalize_text_for_elevenlabs(text)
-
-        logger.info(f"Processed text: {text}")
         return ChunkedStream(
             tts=self,
             input_text=text,
-            raw_input_text=raw_input_text,
             conn_options=conn_options,
             opts=self._opts,
             session=self._ensure_session(),
@@ -266,6 +243,91 @@ class TTS(tts.TTS):
             session=self._ensure_session(),
         )
 
+    def normalize_for_synthesis(self, text: str) -> str:
+        if (
+            "Exeter Finance LLC" in text
+            and "Dallas" not in text
+            and "Carrollton" not in text
+        ):
+            self.update_options(speed=1.2)
+        elif "Por favor diga español" in text:
+            # These options are updated after the language switch consent flow depending on the language
+            self.update_options(
+                voice="db832ebd-3cb6-42e7-9d47-912b425adbaa",
+                model="sonic-multilingual",
+                language="es",
+            )
+        elif "Carrollton" in text or "Dallas" in text:
+            logger.info("Carrollton or Dallas detected, setting speed to slowest")
+            self.update_options(speed=0.7)
+        else:
+            self.update_options(speed=0.95)
+
+        text = normalize_text_for_elevenlabs(text)
+        return text
+
+    async def _play_presynthesized_audio(
+        self, wav_path: str, event_ch, input_text: str
+    ) -> None:
+        logger.info(f"Playing Presynthesized Audio: {input_text}")
+        request_id = utils.shortuuid()
+
+        # Read the WAV file
+        wav_path = get_wav_if_available(input_text)
+        audio_array, file_sample_rate = sf.read(str(wav_path), dtype="int16")
+
+        logger.info(f"File sample rate: {file_sample_rate}")
+        logger.info(
+            f"WAV file channels: {1 if audio_array.ndim == 1 else audio_array.shape[1]}"
+        )
+        logger.info(f"Target sample rate: {self._opts.sample_rate}")
+
+        # Convert stereo to mono if needed
+        if audio_array.ndim == 2 and audio_array.shape[1] == 2:
+            logger.info("Converting stereo to mono")
+            audio_array = audio_array.mean(axis=1)
+
+        # Resample if needed
+        if file_sample_rate != self._opts.sample_rate:
+            logger.info(
+                f"Resampling from {file_sample_rate} to {self._opts.sample_rate}"
+            )
+            # Calculate number of samples for the target sample rate
+            num_samples = int(
+                len(audio_array) * self._opts.sample_rate / file_sample_rate
+            )
+            audio_array = signal.resample(audio_array, num_samples)
+
+        # Process audio in chunks
+        samples_per_channel = 960  # Standard frame size for audio processing
+        for i in range(0, len(audio_array), samples_per_channel):
+            chunk = audio_array[i : i + samples_per_channel]
+
+            # Pad the last chunk if needed
+            if len(chunk) < samples_per_channel:
+                chunk = np.pad(chunk, (0, samples_per_channel - len(chunk)))
+
+            # Apply soft clipping and ensure int16 format
+            chunk = np.tanh(chunk / 32768.0) * 32768.0
+            chunk = np.round(chunk).astype(np.int16)
+
+            # Create and send the audio frame with matching parameters
+            frame = rtc.AudioFrame(
+                data=chunk.tobytes(),
+                sample_rate=self._opts.sample_rate,  # Use the TTS instance's sample rate
+                samples_per_channel=samples_per_channel,
+                num_channels=NUM_CHANNELS,  # Make sure this matches the expected number of channels
+            )
+            event_ch.send_nowait(
+                tts.SynthesizedAudio(
+                    request_id=request_id,
+                    frame=frame,
+                )
+            )
+
+        logger.info(f"Sent Presynthesized Audio to event channel")
+        return
+
 
 class ChunkedStream(tts.ChunkedStream):
     """Synthesize using the chunked api endpoint"""
@@ -275,25 +337,31 @@ class ChunkedStream(tts.ChunkedStream):
         *,
         tts: TTS,
         input_text: str,
-        raw_input_text: str,
         opts: _TTSOptions,
         conn_options: APIConnectOptions,
         session: aiohttp.ClientSession,
     ) -> None:
         super().__init__(tts=tts, input_text=input_text, conn_options=conn_options)
         self._opts, self._session = opts, session
-        self._raw_input_text = raw_input_text
         if _encoding_from_format(self._opts.encoding) == "mp3":
             self._mp3_decoder = utils.codecs.Mp3StreamDecoder()
 
     async def _run(self) -> None:
         logger.info(f"ChunkedStream _run with input text: {self._input_text}")
-        print(f"get_wav_if_available for {self._raw_input_text}")
-        filler_phrase_wav = get_wav_if_available(self._raw_input_text)
+        print(f"get_wav_if_available for {self._input_text}")
+        filler_phrase_wav = get_wav_if_available(self._input_text)
         print(f"filler_phrase_wav: {filler_phrase_wav}")
         if filler_phrase_wav:
-            await self._play_presynthesized_audio(filler_phrase_wav)
+            await self._tts._play_presynthesized_audio(
+                filler_phrase_wav, self._event_ch, self._input_text
+            )
             return
+
+        logger.info(
+            f"ChunkedStream _run with raw input text for Audio Synthesis: {self._input_text}"
+        )
+        normalized_text = self._tts.normalize_for_synthesis(self._input_text)
+        logger.info(f"Running cartesia chunked synthesis for {normalized_text}")
 
         request_id = utils.shortuuid()
         bstream = utils.audio.AudioByteStream(
@@ -306,7 +374,7 @@ class ChunkedStream(tts.ChunkedStream):
             else None
         )
         data = {
-            "text": self._input_text,
+            "text": normalized_text,
             "model_id": self._opts.model,
             "voice_settings": voice_settings,
         }
@@ -360,65 +428,6 @@ class ChunkedStream(tts.ChunkedStream):
         except Exception as e:
             raise APIConnectionError() from e
 
-    async def _play_presynthesized_audio(self, wav_path: str) -> None:
-        logger.info(
-            f"ChunkedStream _run with input text for Presynthesized Audio: {self._input_text}"
-        )
-        request_id = utils.shortuuid()
-
-        audio_array, file_sample_rate = sf.read(str(wav_path), dtype="int16")
-
-        logger.info(f"File sample rate: {file_sample_rate}")
-        logger.info(
-            f"WAV file channels: {1 if audio_array.ndim == 1 else audio_array.shape[1]}"
-        )
-        logger.info(f"Target sample rate: {self._opts.sample_rate}")
-
-        # Convert stereo to mono if needed
-        if audio_array.ndim == 2 and audio_array.shape[1] == 2:
-            logger.info("Converting stereo to mono")
-            audio_array = audio_array.mean(axis=1)
-
-        # Resample if needed
-        if file_sample_rate != self._opts.sample_rate:
-            logger.info(
-                f"Resampling from {file_sample_rate} to {self._opts.sample_rate}"
-            )
-            # Calculate number of samples for the target sample rate
-            num_samples = int(
-                len(audio_array) * self._opts.sample_rate / file_sample_rate
-            )
-            audio_array = signal.resample(audio_array, num_samples)
-
-        # Process audio in chunks
-        samples_per_channel = 960  # Standard frame size for audio processing
-        for i in range(0, len(audio_array), samples_per_channel):
-            chunk = audio_array[i : i + samples_per_channel]
-
-            # Pad the last chunk if needed
-            if len(chunk) < samples_per_channel:
-                chunk = np.pad(chunk, (0, samples_per_channel - len(chunk)))
-
-            # Apply soft clipping and ensure int16 format
-            chunk = np.tanh(chunk / 32768.0) * 32768.0
-            chunk = np.round(chunk).astype(np.int16)
-
-            # Create and send the audio frame with matching parameters
-            frame = rtc.AudioFrame(
-                data=chunk.tobytes(),
-                sample_rate=self._opts.sample_rate,  # Use the TTS instance's sample rate
-                samples_per_channel=samples_per_channel,
-                num_channels=NUM_CHANNELS,  # Make sure this matches the expected number of channels
-            )
-            self._event_ch.send_nowait(
-                tts.SynthesizedAudio(
-                    request_id=request_id,
-                    frame=frame,
-                )
-            )
-
-        logger.info(f"ChunkedStream _run completed for Presynthesized Audio")
-
 
 class SynthesizeStream(tts.SynthesizeStream):
     """Streamed API using websockets"""
@@ -443,12 +452,29 @@ class SynthesizeStream(tts.SynthesizeStream):
             """tokenize text from the input_ch to words"""
             word_stream = None
             async for input in self._input_ch:
+                logger.info(f"Tokenizing event channel elevenlabs input: {input}")
                 if isinstance(input, str):
+                    # Check for filler phrases
+                    filler_phrase_wav = get_wav_if_available(input)
+                    if filler_phrase_wav:
+                        logger.info(f"Playing presynthesized audio for: {input}")
+                        await self._tts._play_presynthesized_audio(
+                            filler_phrase_wav, self._event_ch, input
+                        )
+                        continue
+
                     if word_stream is None:
                         # new segment (after flush for e.g)
                         word_stream = self._opts.word_tokenizer.stream()
                         self._segments_ch.send_nowait(word_stream)
 
+                    logger.info(f"Pushing text to elevenlabs word_stream: {input}")
+
+                    normalized_data = self._tts.normalize_for_synthesis(input)
+                    logger.info(
+                        f"Normalized text sent to el
+                        evenlabs word_stream: {normalized_data}"
+                    )
                     word_stream.push_text(input)
                 elif isinstance(input, self._FlushSentinel):
                     if word_stream is not None:
