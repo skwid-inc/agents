@@ -244,6 +244,7 @@ class TTS(tts.TTS):
         )
 
     def normalize_for_synthesis(self, text: str) -> str:
+        logger.info(f"Normalizing text for synthesis: {text}")
         if (
             "Exeter Finance LLC" in text
             and "Dallas" not in text
@@ -264,6 +265,7 @@ class TTS(tts.TTS):
             self.update_options(speed=0.95)
 
         text = normalize_text_for_elevenlabs(text)
+        logger.info(f"Normalized text for elevenlabs: {text}")
         return text
 
     async def _play_presynthesized_audio(
