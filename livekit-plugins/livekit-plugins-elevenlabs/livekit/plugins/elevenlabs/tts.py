@@ -554,6 +554,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                     await ws_conn.send_str(json.dumps(data_pkt))
                 if xml_content:
                     logger.warning("11labs stream ended with incomplete xml content")
+                logger.info("Elevenlabs: Sending flush")
                 await ws_conn.send_str(json.dumps({"flush": True}))
 
             async def recv_task():
