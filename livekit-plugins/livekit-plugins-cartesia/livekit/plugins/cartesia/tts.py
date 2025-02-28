@@ -20,8 +20,9 @@ import json
 import logging
 import os
 import time
+import weakref
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 import aiohttp
 import numpy as np
@@ -29,7 +30,6 @@ import soundfile as sf
 from filler_phrases import get_wav_if_available
 from livekit import rtc
 from livekit.agents import (
-    DEFAULT_API_CONNECT_OPTIONS,
     APIConnectionError,
     APIConnectOptions,
     APIStatusError,
@@ -139,6 +139,23 @@ class TTS(tts.TTS):
             base_url=base_url,
         )
         self._session = http_session
+        self._pool = utils.ConnectionPool[aiohttp.ClientWebSocketResponse](
+            connect_cb=self._connect_ws,
+            close_cb=self._close_ws,
+        )
+        self._streams = weakref.WeakSet[SynthesizeStream]()
+
+    async def _connect_ws(self) -> aiohttp.ClientWebSocketResponse:
+        session = self._ensure_session()
+        url = self._opts.get_ws_url(
+            f"/tts/websocket?api_key={self._opts.api_key}&cartesia_version={API_VERSION}"
+        )
+        return await asyncio.wait_for(
+            session.ws_connect(url), self._conn_options.timeout
+        )
+
+    async def _close_ws(self, ws: aiohttp.ClientWebSocketResponse):
+        await ws.close()
 
     def _ensure_session(self) -> aiohttp.ClientSession:
         if not self._session:
@@ -179,7 +196,7 @@ class TTS(tts.TTS):
         self,
         text: str,
         *,
-        conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
+        conn_options: Optional[APIConnectOptions] = None,
     ) -> ChunkedStream:
         logging.info(f"Synthesize called with text: {text}")
 
@@ -223,14 +240,22 @@ class TTS(tts.TTS):
         )
 
     def stream(
-        self, *, conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS
+        self, *, conn_options: Optional[APIConnectOptions] = None
     ) -> "SynthesizeStream":
-        return SynthesizeStream(
+        stream = SynthesizeStream(
             tts=self,
-            conn_options=conn_options,
+            pool=self._pool,
             opts=self._opts,
-            session=self._ensure_session(),
         )
+        self._streams.add(stream)
+        return stream
+
+    async def aclose(self) -> None:
+        for stream in list(self._streams):
+            await stream.aclose()
+        self._streams.clear()
+        await self._pool.aclose()
+        await super().aclose()
 
 
 class ChunkedStream(tts.ChunkedStream):
@@ -241,9 +266,9 @@ class ChunkedStream(tts.ChunkedStream):
         *,
         tts: TTS,
         input_text: str,
-        conn_options: APIConnectOptions,
         opts: _TTSOptions,
         session: aiohttp.ClientSession,
+        conn_options: Optional[APIConnectOptions] = None,
     ) -> None:
         super().__init__(tts=tts, input_text=input_text, conn_options=conn_options)
         self._opts, self._session = opts, session
@@ -386,12 +411,11 @@ class SynthesizeStream(tts.SynthesizeStream):
         self,
         *,
         tts: TTS,
-        conn_options: APIConnectOptions,
         opts: _TTSOptions,
-        session: aiohttp.ClientSession,
+        pool: utils.ConnectionPool[aiohttp.ClientWebSocketResponse],
     ):
-        super().__init__(tts=tts, conn_options=conn_options)
-        self._opts, self._session = opts, session
+        super().__init__(tts=tts)
+        self._opts, self._pool = opts, pool
         self._sent_tokenizer_stream = tokenize.basic.SentenceTokenizer(
             min_sentence_len=BUFFERED_WORDS_COUNT
         ).stream()
@@ -478,25 +502,13 @@ class SynthesizeStream(tts.SynthesizeStream):
                         last_frame = frame
 
                     _send_last_frame(segment_id=segment_id, is_final=True)
-
                     if segment_id == request_id:
-                        # we're not going to receive more frames, close the connection
-                        await ws.close()
+                        # we're not going to receive more frames, end stream
                         break
                 else:
                     logger.error("unexpected Cartesia message %s", data)
 
-        url = self._opts.get_ws_url(
-            f"/tts/websocket?api_key={self._opts.api_key}&cartesia_version={API_VERSION}"
-        )
-
-        ws: aiohttp.ClientWebSocketResponse | None = None
-
-        try:
-            ws = await asyncio.wait_for(
-                self._session.ws_connect(url), self._conn_options.timeout
-            )
-
+        async with self._pool.connection() as ws:
             tasks = [
                 asyncio.create_task(_input_task()),
                 asyncio.create_task(_sentence_stream_task(ws)),
@@ -507,9 +519,6 @@ class SynthesizeStream(tts.SynthesizeStream):
                 await asyncio.gather(*tasks)
             finally:
                 await utils.aio.gracefully_cancel(*tasks)
-        finally:
-            if ws is not None:
-                await ws.close()
 
 
 def _to_cartesia_options(opts: _TTSOptions) -> dict[str, Any]:

@@ -1,5 +1,29 @@
 # livekit-plugins-google
 
+## 0.10.6
+
+### Patch Changes
+
+- google stt: change default model to `latest_long` - [#1552](https://github.com/livekit/agents/pull/1552) ([@jayeshp19](https://github.com/jayeshp19))
+
+- feat: connection pooling. speeds up generation with STT/TTS providers - [#1538](https://github.com/livekit/agents/pull/1538) ([@davidzhao](https://github.com/davidzhao))
+
+- fix: functioncall cancellation ids in realtime - [#1572](https://github.com/livekit/agents/pull/1572) ([@jayeshp19](https://github.com/jayeshp19))
+
+- google-genai version bump & remove id feild from function call and function response - [#1559](https://github.com/livekit/agents/pull/1559) ([@jayeshp19](https://github.com/jayeshp19))
+
+## 0.10.5
+
+### Patch Changes
+
+- fix(google): require min confidence score due to aggressive generation - [#1507](https://github.com/livekit/agents/pull/1507) ([@davidzhao](https://github.com/davidzhao))
+
+## 0.10.4
+
+### Patch Changes
+
+- Gemini realtime : rollback default model to `gemini-2.0-flash-exp` - [#1489](https://github.com/livekit/agents/pull/1489) ([@jayeshp19](https://github.com/jayeshp19))
+
 ## 0.10.3
 
 ### Patch Changes

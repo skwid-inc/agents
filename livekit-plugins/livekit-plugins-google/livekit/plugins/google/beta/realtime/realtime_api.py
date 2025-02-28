@@ -11,12 +11,12 @@ from livekit.agents import llm, utils
 from livekit.agents.llm.function_context import _create_ai_function_info
 
 from google import genai
-from google.genai._api_client import HttpOptions
 from google.genai.types import (
     Blob,
     Content,
     FunctionResponse,
     GenerationConfig,
+    HttpOptions,
     LiveClientContent,
     LiveClientRealtimeInput,
     LiveClientToolResponse,
@@ -104,10 +104,10 @@ class RealtimeModel:
         self,
         *,
         instructions: str | None = None,
-        model: LiveAPIModels | str = "gemini-2.0-flash-001",
+        model: LiveAPIModels | str = "gemini-2.0-flash-exp",
         api_key: str | None = None,
         voice: Voice | str = "Puck",
-        modalities: list[Modality] = ["AUDIO"],
+        modalities: list[Modality] = [Modality.AUDIO],
         enable_user_audio_transcription: bool = True,
         enable_agent_audio_transcription: bool = True,
         vertexai: bool = False,
@@ -136,7 +136,7 @@ class RealtimeModel:
             instructions (str, optional): Initial system instructions for the model. Defaults to "".
             api_key (str or None, optional): Google Gemini API key. If None, will attempt to read from the environment variable GOOGLE_API_KEY.
             modalities (list[Modality], optional): Modalities to use, such as ["TEXT", "AUDIO"]. Defaults to ["AUDIO"].
-            model (str or None, optional): The name of the model to use. Defaults to "gemini-2.0-flash-001".
+            model (str or None, optional): The name of the model to use. Defaults to "gemini-2.0-flash-exp".
             voice (api_proto.Voice, optional): Voice setting for audio outputs. Defaults to "Puck".
             enable_user_audio_transcription (bool, optional): Whether to enable user audio transcription. Defaults to True
             enable_agent_audio_transcription (bool, optional): Whether to enable agent audio transcription. Defaults to True
@@ -479,12 +479,12 @@ class GeminiRealtimeSession(utils.EventEmitter[EventTypes]):
                         logger.warning(
                             "function call cancelled",
                             extra={
-                                "function_call_ids": response.tool_call_cancellation.function_call_ids,
+                                "function_call_ids": response.tool_call_cancellation.ids,
                             },
                         )
                         self.emit(
                             "function_calls_cancelled",
-                            response.tool_call_cancellation.function_call_ids,
+                            response.tool_call_cancellation.ids,
                         )
 
         async with self._client.aio.live.connect(
