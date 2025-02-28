@@ -531,6 +531,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                 nonlocal expected_text
                 xml_content = []
                 word_count = 0  # Initialize word counter
+                last_token_was_punctuation = False
 
                 async for data in word_stream:
                     text = data.token
@@ -549,16 +550,33 @@ class SynthesizeStream(tts.SynthesizeStream):
                         else:
                             continue
 
-                    data_pkt = dict(text=f"{text} ")  # must always end with a space
+                    # Fix for punctuation - ensure proper spacing
+                    is_punctuation = text.strip() in [".", ",", "!", "?", ";", ":"]
+
+                    # If text is just punctuation, add it to the previous token with a space after
+                    if is_punctuation:
+                        # Add space after punctuation to prevent merging with next word
+                        data_pkt = dict(text=f"{text} ")
+                        last_token_was_punctuation = True
+                    else:
+                        # If previous token was punctuation, ensure there's proper spacing
+                        if last_token_was_punctuation:
+                            # Already have a space after punctuation, send the word normally
+                            data_pkt = dict(text=f"{text} ")
+                        else:
+                            # Normal word, add space after
+                            data_pkt = dict(text=f"{text} ")
+                        last_token_was_punctuation = False
+
                     logger.info(
                         f"about to send text to elevenlabs, data_pkt: {data_pkt}"
                     )
                     self._mark_started()
                     await ws_conn.send_str(json.dumps(data_pkt))
 
-                    # Increment word counter and flush every 3 words
+                    # Increment word counter and flush every 5 words or after punctuation
                     word_count += 1
-                    if word_count % 5 == 0 or "." in text or "?" in text or "!" in text:
+                    if word_count % 5 == 0 or is_punctuation:
                         logger.info(
                             "Elevenlabs: Sending flush after 5 words or punctuation"
                         )
