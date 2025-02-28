@@ -126,7 +126,7 @@ class TTS(tts.TTS):
             ignore_punctuation=False  # punctuation can help for intonation
         ),
         enable_ssml_parsing: bool = False,
-        chunk_length_schedule: list[int] = [80, 120, 200, 260],  # range is [50, 500]
+        chunk_length_schedule: list[int] = [20, 60, 120, 200],  # range is [50, 500]
         http_session: aiohttp.ClientSession | None = None,
         # deprecated
         model_id: TTSModels | str | None = None,
