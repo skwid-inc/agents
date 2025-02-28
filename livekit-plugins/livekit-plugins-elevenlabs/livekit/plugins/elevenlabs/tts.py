@@ -625,6 +625,8 @@ class SynthesizeStream(tts.SynthesizeStream):
                         received_text += "".join(alignment.get("chars", [])).replace(
                             " ", ""
                         )
+                        print(f"Elevenlabs: received_text: {received_text}")
+                        print(f"Elevenlabs: expected_text: {expected_text}")
                         if received_text == expected_text:
                             for frame in audio_bstream.flush():
                                 _send_last_frame(segment_id=segment_id, is_final=False)
