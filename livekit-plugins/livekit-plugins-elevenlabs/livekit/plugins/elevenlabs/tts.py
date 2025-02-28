@@ -621,6 +621,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                     else:
                         logger.error("unexpected 11labs message %s", data)
 
+                    print(f"Elevenlabs: data: {data}")
                     if alignment := data.get("normalizedAlignment"):
                         received_text += "".join(alignment.get("chars", [])).replace(
                             " ", ""
