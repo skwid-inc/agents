@@ -5,7 +5,7 @@ import inspect
 from typing import Any, AsyncIterable, Awaitable, Callable, Union
 
 from livekit import rtc
-
+from livekit.agents.tts.tts import APIConnectOptions
 from .. import llm, tokenize, utils
 from .. import transcription as agent_transcription
 from .. import tts as text_to_speech
@@ -216,7 +216,7 @@ class AgentOutput:
         read_transcript_atask: asyncio.Task | None = None
 
         first_frame = True
-        tts_stream = handle._tts.synthesize(tts_text)
+        tts_stream = handle._tts.synthesize(tts_text, conn_options=APIConnectOptions(max_retry=0))
         try:
             async for audio in tts_stream:
                 if first_frame:
