@@ -530,10 +530,13 @@ class SynthesizeStream(tts.SynthesizeStream):
             async def send_task():
                 nonlocal expected_text
                 xml_content = []
+                word_count = 0  # Initialize word counter
+
                 async for data in word_stream:
                     text = data.token
                     expected_text += text
-                    # send the xml phoneme in one go
+
+                    # handle XML phoneme content
                     if (
                         self._opts.enable_ssml_parsing
                         and data.token.startswith("<phoneme")
@@ -552,11 +555,18 @@ class SynthesizeStream(tts.SynthesizeStream):
                     )
                     self._mark_started()
                     await ws_conn.send_str(json.dumps(data_pkt))
-                    # logger.info("Elevenlabs: Sending flush")
-                    # await ws_conn.send_str(json.dumps({"flush": True}))
+
+                    # Increment word counter and flush every 3 words
+                    word_count += 1
+                    if word_count % 3 == 0:
+                        logger.info("Elevenlabs: Sending flush after 3 words")
+                        await ws_conn.send_str(json.dumps({"flush": True}))
+
                 if xml_content:
                     logger.warning("11labs stream ended with incomplete xml content")
-                logger.info("Elevenlabs: Sending flush")
+
+                # Final flush at the end
+                logger.info("Elevenlabs: Sending final flush")
                 await ws_conn.send_str(json.dumps({"flush": True}))
 
             async def recv_task():
