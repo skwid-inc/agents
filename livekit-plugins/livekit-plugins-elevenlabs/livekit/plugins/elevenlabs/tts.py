@@ -662,7 +662,7 @@ def _synthesize_url(opts: _TTSOptions) -> str:
     latency = opts.streaming_latency
     return (
         f"{base_url}/text-to-speech/{voice_id}/stream?"
-        f"model_id={model_id}&output_format={output_format}&optimize_streaming_latency={latency}"
+        f"model_id={model_id}&output_format={output_format}&optimize_streaming_latency={latency}&auto_mode=true"
     )
 
 
