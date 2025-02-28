@@ -533,6 +533,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                 word_count = 0  # Initialize word counter
 
                 async for data in word_stream:
+                    print(f"inside send_task, data: {data}")
                     text = data.token
                     expected_text += text
 
