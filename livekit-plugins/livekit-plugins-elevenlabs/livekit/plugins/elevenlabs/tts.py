@@ -524,6 +524,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                     chunk_length_schedule=self._opts.chunk_length_schedule
                 ),
             )
+            print(f"init_pkt: {init_pkt}")
             await ws_conn.send_str(json.dumps(init_pkt))
 
             async def send_task():
