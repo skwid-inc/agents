@@ -558,9 +558,11 @@ class SynthesizeStream(tts.SynthesizeStream):
 
                     # Increment word counter and flush every 3 words
                     word_count += 1
-                    # if word_count % 3 == 0:
-                    #     logger.info("Elevenlabs: Sending flush after 3 words")
-                    #     await ws_conn.send_str(json.dumps({"flush": True}))
+                    if word_count % 5 == 0 or "." in text or "?" in text or "!" in text:
+                        logger.info(
+                            "Elevenlabs: Sending flush after 5 words or punctuation"
+                        )
+                        await ws_conn.send_str(json.dumps({"flush": True}))
 
                 if xml_content:
                     logger.warning("11labs stream ended with incomplete xml content")
