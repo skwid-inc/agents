@@ -466,6 +466,7 @@ class SynthesizeStream(tts.SynthesizeStream):
             word_stream = None
             async for input in self._input_ch:
                 if isinstance(input, str):
+                    print(f"inside _tokenize_input, input: {input}")
                     if word_stream is None:
                         # new segment (after flush for e.g)
                         word_stream = self._opts.word_tokenizer.stream()
