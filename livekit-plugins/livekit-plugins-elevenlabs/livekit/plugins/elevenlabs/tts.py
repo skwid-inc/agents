@@ -552,8 +552,8 @@ class SynthesizeStream(tts.SynthesizeStream):
                     )
                     self._mark_started()
                     await ws_conn.send_str(json.dumps(data_pkt))
-                    logger.info("Elevenlabs: Sending flush")
-                    await ws_conn.send_str(json.dumps({"flush": True}))
+                    # logger.info("Elevenlabs: Sending flush")
+                    # await ws_conn.send_str(json.dumps({"flush": True}))
                 if xml_content:
                     logger.warning("11labs stream ended with incomplete xml content")
                 logger.info("Elevenlabs: Sending flush")
