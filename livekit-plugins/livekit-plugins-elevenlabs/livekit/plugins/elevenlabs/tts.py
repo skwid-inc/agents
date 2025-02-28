@@ -682,6 +682,7 @@ def _synthesize_url(opts: _TTSOptions) -> str:
 
 
 def _stream_url(opts: _TTSOptions) -> str:
+
     base_url = opts.base_url
     voice_id = opts.voice.id
     model_id = opts.model
@@ -696,4 +697,5 @@ def _stream_url(opts: _TTSOptions) -> str:
     )
     if language is not None:
         url += f"&language_code={language}"
+    print(f"stream_url: {url}")
     return url
