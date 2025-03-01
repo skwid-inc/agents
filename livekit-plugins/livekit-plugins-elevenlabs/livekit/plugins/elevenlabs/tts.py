@@ -478,7 +478,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                     # print(f"inside _tokenize_input, input after regex: {input}")
 
                     # input = "test "
-                    input = input.replace(".", "")
+                    input = input.replace(".", "dot")
                     input = f" {input.strip()} "
                     if word_stream is None:
                         print(f"word stream is None, creating new word stream")
