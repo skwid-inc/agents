@@ -579,7 +579,7 @@ class SynthesizeStream(tts.SynthesizeStream):
 
                     # Increment word counter and flush every 5 words or after punctuation
                     word_count += 1
-                    if word_count % 5 == 0 or text.strip() in [
+                    if word_count % 8 == 0 or text.strip() in [
                         ".",
                         ",",
                         "!",
@@ -588,7 +588,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                         ":",
                     ]:
                         logger.info(
-                            "Elevenlabs: Sending flush after 5 words or punctuation"
+                            "Elevenlabs: Sending flush after 8 words or punctuation"
                         )
                         await ws_conn.send_str(json.dumps({"flush": True}))
 
