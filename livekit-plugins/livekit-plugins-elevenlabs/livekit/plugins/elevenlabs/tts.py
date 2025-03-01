@@ -486,6 +486,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                         word_stream = self._opts.word_tokenizer.stream()
                         self._segments_ch.send_nowait(word_stream)
 
+                    print(f"pushing text to word stream: {input}")
                     word_stream.push_text(input)
                 elif isinstance(input, self._FlushSentinel):
                     if word_stream is not None:
