@@ -477,8 +477,9 @@ class SynthesizeStream(tts.SynthesizeStream):
                     #     input += " "
                     # print(f"inside _tokenize_input, input after regex: {input}")
 
-                    if not input.endswith(" "):
-                        input += " "
+                    input = "test "
+                    # if not input.endswith(" "):
+                    #     input += " "
                     if word_stream is None:
                         print(f"word stream is None, creating new word stream")
                         # new segment (after flush for e.g)
