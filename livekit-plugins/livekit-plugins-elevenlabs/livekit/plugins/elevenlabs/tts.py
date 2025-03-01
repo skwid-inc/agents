@@ -19,6 +19,7 @@ import base64
 import dataclasses
 import json
 import os
+import re
 import weakref
 from dataclasses import dataclass
 from typing import Any, List, Literal, Optional
@@ -467,6 +468,12 @@ class SynthesizeStream(tts.SynthesizeStream):
             async for input in self._input_ch:
                 if isinstance(input, str):
                     print(f"inside _tokenize_input, input: {input}")
+
+                    pattern = r"([a-zA-Z])([^\w\s])([a-zA-Z])"
+
+                    # Replace with the first alphabet character, the punctuation, a space, and the second alphabet character
+                    input = re.sub(pattern, r"\1\2 \3", input)
+
                     if word_stream is None:
                         # new segment (after flush for e.g)
                         word_stream = self._opts.word_tokenizer.stream()
@@ -529,6 +536,7 @@ class SynthesizeStream(tts.SynthesizeStream):
             await ws_conn.send_str(json.dumps(init_pkt))
 
             async def send_task():
+
                 nonlocal expected_text
                 xml_content = []
                 word_count = 0  # Initialize word counter
