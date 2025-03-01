@@ -473,6 +473,8 @@ class SynthesizeStream(tts.SynthesizeStream):
 
                     # Replace with the first alphabet character, the punctuation, a space, and the second alphabet character
                     input = re.sub(pattern, r"\1\2 \3", input)
+                    if input.endswith("."):
+                        input += " "
                     print(f"inside _tokenize_input, input after regex: {input}")
 
                     if word_stream is None:
