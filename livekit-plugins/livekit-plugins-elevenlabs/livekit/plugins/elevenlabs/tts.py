@@ -472,10 +472,11 @@ class SynthesizeStream(tts.SynthesizeStream):
                     pattern = r"([a-zA-Z])([^\w\s])([a-zA-Z])"
 
                     # Replace with the first alphabet character, the punctuation, a space, and the second alphabet character
-                    input = re.sub(pattern, r"\1\2 \3", input)
-                    if input.endswith("."):
-                        input += " "
-                    print(f"inside _tokenize_input, input after regex: {input}")
+                    input = "test "
+                    # input = re.sub(pattern, r"\1\2 \3", input)
+                    # if input.endswith("."):
+                    #     input += " "
+                    # print(f"inside _tokenize_input, input after regex: {input}")
 
                     if word_stream is None:
                         print(f"word stream is None, creating new word stream")
@@ -587,7 +588,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                         logger.info(
                             "Elevenlabs: Sending flush after 5 words or punctuation"
                         )
-                        # await ws_conn.send_str(json.dumps({"flush": True}))
+                        await ws_conn.send_str(json.dumps({"flush": True}))
 
                 if xml_content:
                     logger.warning("11labs stream ended with incomplete xml content")
