@@ -469,15 +469,16 @@ class SynthesizeStream(tts.SynthesizeStream):
                 if isinstance(input, str):
                     print(f"inside _tokenize_input, input: {input}")
 
-                    pattern = r"([a-zA-Z])([^\w\s])([a-zA-Z])"
+                    # pattern = r"([a-zA-Z])([^\w\s])([a-zA-Z])"
 
                     # Replace with the first alphabet character, the punctuation, a space, and the second alphabet character
-                    input = "test "
                     # input = re.sub(pattern, r"\1\2 \3", input)
                     # if input.endswith("."):
                     #     input += " "
                     # print(f"inside _tokenize_input, input after regex: {input}")
 
+                    if not input.endswith(" "):
+                        input += " "
                     if word_stream is None:
                         print(f"word stream is None, creating new word stream")
                         # new segment (after flush for e.g)
