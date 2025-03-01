@@ -577,19 +577,20 @@ class SynthesizeStream(tts.SynthesizeStream):
                     self._mark_started()
                     await ws_conn.send_str(json.dumps(data_pkt))
 
-                    # Increment word counter and flush every 5 words or after punctuation
+                    # Increment word counter and flush every 8 words or after punctuation
                     word_count += 1
-                    if word_count % 8 == 0 or text.strip() in [
-                        ".",
-                        ",",
-                        "!",
-                        "?",
-                        ";",
-                        ":",
-                    ]:
-                        logger.info(
-                            "Elevenlabs: Sending flush after 8 words or punctuation"
-                        )
+                    if any(
+                        punctuation in text
+                        for punctuation in [
+                            ".",
+                            ",",
+                            "!",
+                            "?",
+                            ";",
+                            ":",
+                        ]
+                    ):
+                        logger.info("Elevenlabs: Sending flush after punctuation")
                         await ws_conn.send_str(json.dumps({"flush": True}))
 
                 if xml_content:
