@@ -467,7 +467,7 @@ class SynthesizeStream(tts.SynthesizeStream):
             word_stream = None
             async for input in self._input_ch:
                 if isinstance(input, str):
-                    print(f"inside _tokenize_input, input: {input}")
+                    print(f"inside _tokenize_input v2, input: {input}")
 
                     # pattern = r"([a-zA-Z])([^\w\s])([a-zA-Z])"
 
