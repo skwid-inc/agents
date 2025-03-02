@@ -45,6 +45,7 @@ class SentenceTokenizer(tokenizer.SentenceTokenizer):
         )
 
     def tokenize(self, text: str, *, language: str | None = None) -> list[str]:
+        print(f"SentenceTokenizer tokenizing text: {text}")
         return [
             tok[0]
             for tok in _basic_sent.split_sentences(
@@ -53,6 +54,7 @@ class SentenceTokenizer(tokenizer.SentenceTokenizer):
         ]
 
     def stream(self, *, language: str | None = None) -> tokenizer.SentenceStream:
+        print(f"SentenceTokenizer streaming text")
         return token_stream.BufferedSentenceStream(
             tokenizer=functools.partial(
                 _basic_sent.split_sentences,
@@ -68,7 +70,7 @@ class WordTokenizer(tokenizer.WordTokenizer):
         self._ignore_punctuation = ignore_punctuation
 
     def tokenize(self, text: str, *, language: str | None = None) -> list[str]:
-        print(f"tokenizing text: {text}")
+        print(f"WordTokenizer tokenizing text: {text}")
         return [
             tok[0]
             for tok in _basic_word.split_words(
@@ -77,7 +79,7 @@ class WordTokenizer(tokenizer.WordTokenizer):
         ]
 
     def stream(self, *, language: str | None = None) -> tokenizer.WordStream:
-        print(f"streaming text")
+        print(f"WordTokenizer streaming text")
         return token_stream.BufferedWordStream(
             tokenizer=functools.partial(
                 _basic_word.split_words, ignore_punctuation=self._ignore_punctuation
@@ -88,8 +90,10 @@ class WordTokenizer(tokenizer.WordTokenizer):
 
 
 def hyphenate_word(word: str) -> list[str]:
+    print(f"hyphenating word: {word}")
     return _basic_hyphenator.hyphenate_word(word)
 
 
 def tokenize_paragraphs(text: str) -> list[str]:
+    print(f"tokenizing paragraphs: {text}")
     return [tok[0] for tok in _basic_paragraph.split_paragraphs(text)]
