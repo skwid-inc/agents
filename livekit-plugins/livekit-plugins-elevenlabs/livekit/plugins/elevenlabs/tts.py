@@ -592,7 +592,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                         ]
                     ):
                         logger.info("Elevenlabs: Sending flush after punctuation")
-                        await ws_conn.send_str(json.dumps({"flush": True}))
+                        # await ws_conn.send_str(json.dumps({"flush": True}))
 
                 if xml_content:
                     logger.warning("11labs stream ended with incomplete xml content")
