@@ -443,6 +443,14 @@ class ChunkedStream(tts.ChunkedStream):
         logger.info(f"ChunkedStream _run completed for Presynthesized Audio")
 
 
+def is_decimal_period(text):
+    """Check if the text contains a period that's part of a decimal number."""
+    # Basic check for dollar amounts or numbers with decimal point
+    if re.search(r"\$?\d+\.\d+", text):
+        return True
+    return False
+
+
 class SynthesizeStream(tts.SynthesizeStream):
     """Streamed API using websockets"""
 
@@ -575,25 +583,14 @@ class SynthesizeStream(tts.SynthesizeStream):
                         data_pkt = dict(text=f"{text}")
                     else:
                         data_pkt = dict(text=f"{text} ")
-                    logger.info(
-                        f"about to send text to elevenlabs, data_pkt: ##{data_pkt}##"
-                    )
+                    logger.info(f"about to send text to elevenlabs: {data_pkt}")
                     self._mark_started()
                     await ws_conn.send_str(json.dumps(data_pkt))
 
-                    # Increment word counter and flush every 8 words or after punctuation
-                    # word_count += 1
                     if any(
                         text.strip().endswith(punctuation)
-                        for punctuation in [
-                            ".",
-                            ",",
-                            "!",
-                            "?",
-                            ";",
-                            ":",
-                        ]
-                    ):
+                        for punctuation in [".", ",", "!", "?", ";", ":"]
+                    ) and not is_decimal_period(text.strip()):
                         logger.info(
                             "Elevenlabs: Sending flush after sentence-ending punctuation"
                         )
