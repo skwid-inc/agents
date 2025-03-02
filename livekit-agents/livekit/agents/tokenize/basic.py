@@ -68,6 +68,7 @@ class WordTokenizer(tokenizer.WordTokenizer):
         self._ignore_punctuation = ignore_punctuation
 
     def tokenize(self, text: str, *, language: str | None = None) -> list[str]:
+        print(f"tokenizing text: {text}")
         return [
             tok[0]
             for tok in _basic_word.split_words(

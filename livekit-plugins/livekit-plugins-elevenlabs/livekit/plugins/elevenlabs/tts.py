@@ -124,7 +124,7 @@ class TTS(tts.TTS):
         encoding: TTSEncoding = "mp3_22050_32",
         streaming_latency: int = 3,
         word_tokenizer: tokenize.WordTokenizer = tokenize.basic.WordTokenizer(
-            ignore_punctuation=True  # punctuation can help for intonation
+            ignore_punctuation=False  # punctuation can help for intonation
         ),
         enable_ssml_parsing: bool = False,
         chunk_length_schedule: list[int] = [20, 60, 120, 200],  # range is [50, 500]
