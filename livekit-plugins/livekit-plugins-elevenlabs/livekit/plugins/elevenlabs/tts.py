@@ -550,7 +550,7 @@ class SynthesizeStream(tts.SynthesizeStream):
 
                 nonlocal expected_text
                 xml_content = []
-                word_count = 0  # Initialize word counter
+                # word_count = 0  # Initialize word counter
 
                 async for data in word_stream:
                     print(f"inside send_task, data: {data}")
@@ -582,9 +582,9 @@ class SynthesizeStream(tts.SynthesizeStream):
                     await ws_conn.send_str(json.dumps(data_pkt))
 
                     # Increment word counter and flush every 8 words or after punctuation
-                    word_count += 1
+                    # word_count += 1
                     if any(
-                        punctuation in text
+                        text.strip().endswith(punctuation)
                         for punctuation in [
                             ".",
                             ",",
@@ -594,8 +594,10 @@ class SynthesizeStream(tts.SynthesizeStream):
                             ":",
                         ]
                     ):
-                        logger.info("Elevenlabs: Sending flush after punctuation")
-                        # await ws_conn.send_str(json.dumps({"flush": True}))
+                        logger.info(
+                            "Elevenlabs: Sending flush after sentence-ending punctuation"
+                        )
+                        await ws_conn.send_str(json.dumps({"flush": True}))
 
                 if xml_content:
                     logger.warning("11labs stream ended with incomplete xml content")
