@@ -10,6 +10,7 @@ def split_words(
     Split the text into words.
     Returns a list of words with their start and end indices of the original text.
     """
+    print(f"splitting words: {text}")
     matches = re.finditer(r"\S+", text)
     words: list[tuple[str, int, int]] = []
 

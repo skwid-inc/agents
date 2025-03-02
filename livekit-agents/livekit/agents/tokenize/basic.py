@@ -77,6 +77,7 @@ class WordTokenizer(tokenizer.WordTokenizer):
         ]
 
     def stream(self, *, language: str | None = None) -> tokenizer.WordStream:
+        print(f"streaming text")
         return token_stream.BufferedWordStream(
             tokenizer=functools.partial(
                 _basic_word.split_words, ignore_punctuation=self._ignore_punctuation
