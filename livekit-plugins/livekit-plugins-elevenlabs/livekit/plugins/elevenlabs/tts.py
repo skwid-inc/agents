@@ -479,7 +479,10 @@ class SynthesizeStream(tts.SynthesizeStream):
 
                     # input = "test "
                     # input = input.replace(".", "dot")
-                    input = f" {input.strip()} "
+                    if "$" in input or "." in input:
+                        input = f" {input.strip()}"
+                    else:
+                        input = f" {input.strip()} "
                     if word_stream is None:
                         print(f"word stream is None, creating new word stream")
                         # new segment (after flush for e.g)
@@ -568,10 +571,10 @@ class SynthesizeStream(tts.SynthesizeStream):
                             continue
 
                     # Add space after punctuation to separate from next word
-                    if text in [".", ",", "!", "?", ";", ":"]:
-                        text = text + " "
-
-                    data_pkt = dict(text=f"{text} ")
+                    if text in [".", ",", "!", "?", ";", ":", "$"]:
+                        data_pkt = dict(text=f"{text}")
+                    else:
+                        data_pkt = dict(text=f"{text} ")
                     logger.info(
                         f"about to send text to elevenlabs, data_pkt: {data_pkt}"
                     )
