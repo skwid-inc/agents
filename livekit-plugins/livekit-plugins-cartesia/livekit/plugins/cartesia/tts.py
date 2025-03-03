@@ -201,6 +201,15 @@ class TTS(tts.TTS):
         logging.info(f"Synthesize called with text: {text}")
 
         if (
+            not AppConfig()
+            .get_call_metadata()
+            .get("first_sentence_synthesis_start_time")
+        ):
+            AppConfig().get_call_metadata().update(
+                {"first_sentence_synthesis_start_time": time.time()}
+            )
+
+        if (
             "Exeter Finance LLC" in text
             and "Dallas" not in text
             and "Carrollton" not in text
@@ -302,10 +311,6 @@ class ChunkedStream(tts.ChunkedStream):
             f"Sending request to Cartesia bytes endpoint with headers: {headers}"
         )
 
-        if not AppConfig().get_call_metadata().get("time_of_first_cartesia_synthesis"):
-            AppConfig().get_call_metadata().update(
-                {"time_of_first_cartesia_synthesis": time.time()}
-            )
         try:
             async with self._session.post(
                 self._opts.get_http_url("/tts/bytes"),

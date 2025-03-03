@@ -19,7 +19,11 @@ import base64
 import dataclasses
 import json
 import os
+<<<<<<< Updated upstream
 import re
+=======
+import time
+>>>>>>> Stashed changes
 import weakref
 from dataclasses import dataclass
 from typing import Any, List, Literal, Optional
@@ -243,6 +247,15 @@ class TTS(tts.TTS):
         conn_options: Optional[APIConnectOptions] = None,
     ) -> "ChunkedStream":
         logger.info(f"Synthesize called with text: {text}")
+
+        if (
+            not AppConfig()
+            .get_call_metadata()
+            .get("first_sentence_synthesis_start_time")
+        ):
+            AppConfig().get_call_metadata().update(
+                {"first_sentence_synthesis_start_time": time.time()}
+            )
 
         if (
             "Exeter Finance LLC" in text
