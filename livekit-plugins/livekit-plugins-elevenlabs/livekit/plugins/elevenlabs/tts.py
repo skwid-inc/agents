@@ -555,17 +555,12 @@ class SynthesizeStream(tts.SynthesizeStream):
             await ws_conn.send_str(json.dumps(init_pkt))
 
             async def send_task():
-
                 nonlocal expected_text
                 xml_content = []
-                # word_count = 0  # Initialize word counter
-
                 async for data in word_stream:
-                    print(f"inside send_task, data: {data}")
                     text = data.token
                     expected_text += text
-
-                    # handle XML phoneme content
+                    # send the xml phoneme in one go
                     if (
                         self._opts.enable_ssml_parsing
                         and data.token.startswith("<phoneme")
@@ -578,30 +573,11 @@ class SynthesizeStream(tts.SynthesizeStream):
                         else:
                             continue
 
-                    # Add space after punctuation to separate from next word
-                    # if text in [".", ",", "!", "?", ";", ":", "$"] or text.isdigit():
-                    #     data_pkt = dict(text=f"{text}")
-                    # else:
-                    #     data_pkt = dict(text=f"{text} ")
-                    data_pkt = dict(text=f"{text}")
-                    logger.info(f"about to send text to elevenlabs: {data_pkt}")
+                    data_pkt = dict(text=f"{text} ")  # must always end with a space
                     self._mark_started()
                     await ws_conn.send_str(json.dumps(data_pkt))
-
-                    # if any(
-                    #     text.strip().endswith(punctuation)
-                    #     for punctuation in [".", ",", "!", "?", ";", ":"]
-                    # ) and not is_decimal_period(text.strip()):
-                    #     logger.info(
-                    #         "Elevenlabs: Sending flush after sentence-ending punctuation"
-                    #     )
-                    # await ws_conn.send_str(json.dumps({"flush": True}))
-
                 if xml_content:
                     logger.warning("11labs stream ended with incomplete xml content")
-
-                # Final flush at the end
-                logger.info("Elevenlabs: Sending final flush")
                 await ws_conn.send_str(json.dumps({"flush": True}))
 
             async def recv_task():
