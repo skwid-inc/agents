@@ -19,7 +19,6 @@ import base64
 import dataclasses
 import json
 import os
-import signal
 import weakref
 from dataclasses import dataclass
 from typing import Any, List, Optional
@@ -38,6 +37,7 @@ from livekit.agents import (
     tts,
     utils,
 )
+from scipy import signal
 
 from .log import logger
 from .models import TTSEncoding, TTSModels
