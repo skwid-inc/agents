@@ -594,7 +594,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                         logger.info(
                             "Elevenlabs: Sending flush after sentence-ending punctuation"
                         )
-                        await ws_conn.send_str(json.dumps({"flush": True}))
+                        # await ws_conn.send_str(json.dumps({"flush": True}))
 
                 if xml_content:
                     logger.warning("11labs stream ended with incomplete xml content")
@@ -672,8 +672,8 @@ class SynthesizeStream(tts.SynthesizeStream):
                         received_text += "".join(alignment.get("chars", [])).replace(
                             " ", ""
                         )
-                        logger.info(f"Elevenlabs: received_text: {received_text}")
-                        logger.info(f"Elevenlabs: expected_text: {expected_text}")
+                        # logger.info(f"Elevenlabs: received_text: {received_text}")
+                        # logger.info(f"Elevenlabs: expected_text: {expected_text}")
                         # if received_text == expected_text:
                         for frame in audio_bstream.flush():
                             _send_last_frame(segment_id=segment_id, is_final=False)
