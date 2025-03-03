@@ -588,14 +588,14 @@ class SynthesizeStream(tts.SynthesizeStream):
                     self._mark_started()
                     await ws_conn.send_str(json.dumps(data_pkt))
 
-                    if any(
-                        text.strip().endswith(punctuation)
-                        for punctuation in [".", ",", "!", "?", ";", ":"]
-                    ) and not is_decimal_period(text.strip()):
-                        logger.info(
-                            "Elevenlabs: Sending flush after sentence-ending punctuation"
-                        )
-                        # await ws_conn.send_str(json.dumps({"flush": True}))
+                    # if any(
+                    #     text.strip().endswith(punctuation)
+                    #     for punctuation in [".", ",", "!", "?", ";", ":"]
+                    # ) and not is_decimal_period(text.strip()):
+                    #     logger.info(
+                    #         "Elevenlabs: Sending flush after sentence-ending punctuation"
+                    #     )
+                    # await ws_conn.send_str(json.dumps({"flush": True}))
 
                 if xml_content:
                     logger.warning("11labs stream ended with incomplete xml content")
