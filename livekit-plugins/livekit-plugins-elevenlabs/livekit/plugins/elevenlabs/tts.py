@@ -579,10 +579,11 @@ class SynthesizeStream(tts.SynthesizeStream):
                             continue
 
                     # Add space after punctuation to separate from next word
-                    if text in [".", ",", "!", "?", ";", ":", "$"] or text.isdigit():
-                        data_pkt = dict(text=f"{text}")
-                    else:
-                        data_pkt = dict(text=f"{text} ")
+                    # if text in [".", ",", "!", "?", ";", ":", "$"] or text.isdigit():
+                    #     data_pkt = dict(text=f"{text}")
+                    # else:
+                    #     data_pkt = dict(text=f"{text} ")
+                    data_pkt = dict(text=f"{text}")
                     logger.info(f"about to send text to elevenlabs: {data_pkt}")
                     self._mark_started()
                     await ws_conn.send_str(json.dumps(data_pkt))
