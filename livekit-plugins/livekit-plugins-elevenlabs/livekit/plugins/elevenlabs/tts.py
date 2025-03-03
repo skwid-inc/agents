@@ -405,11 +405,11 @@ class SynthesizeStream(tts.SynthesizeStream):
             # 11labs protocol expects the first message to be an "init msg"
             init_pkt = dict(
                 text=" ",
-                voice_settings=_strip_nones(
-                    dataclasses.asdict(self._opts.voice.settings)
-                )
-                if self._opts.voice.settings
-                else None,
+                voice_settings=(
+                    _strip_nones(dataclasses.asdict(self._opts.voice.settings))
+                    if self._opts.voice.settings
+                    else None
+                ),
                 generation_config=dict(
                     chunk_length_schedule=self._opts.chunk_length_schedule
                 ),
@@ -439,6 +439,9 @@ class SynthesizeStream(tts.SynthesizeStream):
                     data_pkt = dict(text=f"{text} ")  # must always end with a space
                     self._mark_started()
                     await ws_conn.send_str(json.dumps(data_pkt))
+                    if any(text.strip().endswith(p) for p in [".", "?"]):
+                        logger.info("Sending flush due to sentence-ending punctuation")
+                        await ws_conn.send_str(json.dumps({"flush": True}))
                 if xml_content:
                     logger.warning("11labs stream ended with incomplete xml content")
                 await ws_conn.send_str(json.dumps({"flush": True}))
