@@ -59,9 +59,7 @@ EventTypes = Literal[
     "metrics_collected",
 ]
 
-_CallContextVar = contextvars.ContextVar["AgentCallContext"](
-    "voice_assistant_contextvar"
-)
+_CallContextVar = contextvars.ContextVar["AgentCallContext"]("voice_assistant_contextvar")
 
 
 class AgentCallContext:
@@ -101,9 +99,7 @@ class AgentCallContext:
         return self._extra_chat_messages
 
 
-def _default_before_llm_cb(
-    agent: VoicePipelineAgent, chat_ctx: ChatContext
-) -> LLMStream:
+def _default_before_llm_cb(agent: VoicePipelineAgent, chat_ctx: ChatContext) -> LLMStream:
     return agent.llm.chat(
         chat_ctx=chat_ctx,
         fnc_ctx=agent.fnc_ctx,
@@ -151,9 +147,7 @@ class AgentTranscriptionOptions:
     sentence_tokenizer: tokenize.SentenceTokenizer = tokenize.basic.SentenceTokenizer()
     """The tokenizer used to split the speech into sentences.
     This is used to decide when to mark a transcript as final for the agent transcription."""
-    word_tokenizer: tokenize.WordTokenizer = tokenize.basic.WordTokenizer(
-        ignore_punctuation=False
-    )
+    word_tokenizer: tokenize.WordTokenizer = tokenize.basic.WordTokenizer(ignore_punctuation=False)
     """The tokenizer used to split the speech into words.
     This is used to simulate the "interim results" of the agent transcription."""
     hyphenate_word: Callable[[str], list[str]] = tokenize.basic.hyphenate_word
@@ -338,9 +332,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
     def vad(self) -> vad.VAD:
         return self._vad
 
-    def start(
-        self, room: rtc.Room, participant: rtc.RemoteParticipant | str | None = None
-    ) -> None:
+    def start(self, room: rtc.Room, participant: rtc.RemoteParticipant | str | None = None) -> None:
         """Start the voice assistant
 
         Args:
@@ -389,9 +381,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
 
         @self._vad.on("metrics_collected")
         def _on_vad_metrics(vad_metrics: vad.VADMetrics) -> None:
-            self.emit(
-                "metrics_collected", metrics.PipelineVADMetrics(**vad_metrics.__dict__)
-            )
+            self.emit("metrics_collected", metrics.PipelineVADMetrics(**vad_metrics.__dict__))
 
         room.on("participant_connected", self._on_participant_connected)
         self._room, self._participant = room, participant
@@ -459,9 +449,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
                 pass
             else:
                 if isinstance(source, LLMStream):
-                    logger.warning(
-                        "LLMStream will be ignored for function call chat context"
-                    )
+                    logger.warning("LLMStream will be ignored for function call chat context")
                 elif isinstance(source, AsyncIterable):
                     source, fnc_source = utils.aio.itertools.tee(source, 2)  # type: ignore
                 else:
@@ -489,9 +477,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
             else:
                 text = fnc_source
 
-            call_ctx.add_extra_chat_message(
-                ChatMessage.create(text=text, role="assistant")
-            )
+            call_ctx.add_extra_chat_message(ChatMessage.create(text=text, role="assistant"))
             logger.debug(
                 "added speech to function call chat context",
                 extra={"text": text},
@@ -524,9 +510,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
             await asyncio.sleep(delay)
 
             if self._room.isconnected():
-                await self._room.local_participant.set_attributes(
-                    {ATTRIBUTE_AGENT_STATE: state}
-                )
+                await self._room.local_participant.set_attributes({ATTRIBUTE_AGENT_STATE: state})
 
         if self._update_state_task is not None:
             self._update_state_task.cancel()
@@ -584,12 +568,11 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
             self._plotter.plot_value("vad_probability", ev.probability)
 
             if ev.speech_duration >= self._opts.int_speech_duration:
+                logger.debug(f"speech duration set to {ev.speech_duration} so trying to interrupt")
                 self._interrupt_if_possible()
 
             if ev.raw_accumulated_speech > 0.0:
-                self._last_speech_time = (
-                    time.perf_counter() - ev.raw_accumulated_silence
-                )
+                self._last_speech_time = time.perf_counter() - ev.raw_accumulated_silence
 
         def _on_end_of_speech(ev: vad.VADEvent) -> None:
             self._plotter.plot_event("user_stopped_speaking")
@@ -597,9 +580,21 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
             self._deferred_validation.on_human_end_of_speech(ev)
 
         def _on_interim_transcript(ev: stt.SpeechEvent) -> None:
+            logger.debug(f"Interim transcript: {ev.alternatives[0].text}")
             self._transcribed_interim_text = ev.alternatives[0].text
 
+            text = self._transcribed_interim_text or self._transcribed_text
+            logger.debug(f"Interim transcript text: {text}")
+            interim_words = self._opts.transcription.word_tokenizer.tokenize(text=text)
+            logger.debug(f"Interim words: {interim_words}")
+            if len(interim_words) > 1:
+                logger.debug(
+                    f"Interim words are more than 1: {len(interim_words)}, so trying to interrupt"
+                )
+                self._interrupt_if_possible()
+
         def _on_final_transcript(ev: stt.SpeechEvent) -> None:
+            logger.debug(f"Final transcript: {ev.alternatives[0].text}")
             new_transcript = ev.alternatives[0].text
             if not new_transcript:
                 return
@@ -611,27 +606,21 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
 
             self._last_final_transcript_time = time.perf_counter()
 
-            self._transcribed_text += (
-                " " if self._transcribed_text else ""
-            ) + new_transcript
+            self._transcribed_text += (" " if self._transcribed_text else "") + new_transcript
 
             if self._opts.preemptive_synthesis:
-                if (
-                    self._playing_speech is None
-                    or self._playing_speech.allow_interruptions
-                ):
+                if self._playing_speech is None or self._playing_speech.allow_interruptions:
                     self._synthesize_agent_reply()
 
             self._deferred_validation.on_human_final_transcript(
                 new_transcript, ev.alternatives[0].language
             )
 
-            words = self._opts.transcription.word_tokenizer.tokenize(
-                text=new_transcript
-            )
+            words = self._opts.transcription.word_tokenizer.tokenize(text=new_transcript)
             if len(words) >= 3:
                 # VAD can sometimes not detect that the human is speaking
                 # to make the interruption more reliable, we also interrupt on the final transcript.
+                logger.debug(f"Got more than 3 words so trying to interrupt")
                 self._interrupt_if_possible()
 
         self._human_input.on("start_of_speech", _on_start_of_speech)
@@ -759,9 +748,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
                 # leave the same question in chat context. otherwise it would be
                 # unintentionally committed when the next set of speech comes in.
                 if len(self._transcribed_text) >= len(handle.user_question):
-                    self._transcribed_text = self._transcribed_text[
-                        len(handle.user_question) :
-                    ]
+                    self._transcribed_text = self._transcribed_text[len(handle.user_question) :]
                 handle.cancel()
                 return
 
@@ -787,9 +774,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
         async def _play_nested_speech():
             speech_handle._nested_speech_done_fut = asyncio.Future[None]()
             while not speech_handle.nested_speech_done:
-                nesting_changed = asyncio.create_task(
-                    speech_handle.nested_speech_changed.wait()
-                )
+                nesting_changed = asyncio.create_task(speech_handle.nested_speech_changed.wait())
                 nesting_done_fut: asyncio.Future = speech_handle._nested_speech_done_fut
                 await asyncio.wait(
                     [nesting_changed, nesting_done_fut, fnc_done_fut],
@@ -848,11 +833,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
         join_fut = play_handle.join()
 
         def _commit_user_question_if_needed() -> None:
-            if (
-                not user_question
-                or synthesis_handle.interrupted
-                or speech_handle.user_committed
-            ):
+            if not user_question or synthesis_handle.interrupted or speech_handle.user_committed:
                 return
 
             is_using_tools = isinstance(speech_handle.source, LLMStream) and len(
@@ -883,9 +864,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
         _commit_user_question_if_needed()
 
         while not join_fut.done():
-            await asyncio.wait(
-                [join_fut], return_when=asyncio.FIRST_COMPLETED, timeout=0.2
-            )
+            await asyncio.wait([join_fut], return_when=asyncio.FIRST_COMPLETED, timeout=0.2)
 
             _commit_user_question_if_needed()
 
@@ -902,9 +881,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
 
         # add tool calls and text message to the chat context
         message_id_committed: str | None = None
-        if speech_handle.add_to_chat_ctx and (
-            not user_question or speech_handle.user_committed
-        ):
+        if speech_handle.add_to_chat_ctx and (not user_question or speech_handle.user_committed):
             if speech_handle.extra_tools_messages:
                 if speech_handle.fnc_text_message_id is not None:
                     # there is a message alongside the function calls
@@ -961,9 +938,9 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
                 return
 
             assert isinstance(speech_handle.source, LLMStream)
-            assert not user_question or speech_handle.user_committed, (
-                "user speech should have been committed before using tools"
-            )
+            assert (
+                not user_question or speech_handle.user_committed
+            ), "user speech should have been committed before using tools"
 
             llm_stream = speech_handle.source
 
@@ -1007,9 +984,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
                     continue
 
                 tool_calls_info.append(called_fnc.call_info)
-                tool_calls_results.append(
-                    ChatMessage.create_tool_from_called_function(called_fnc)
-                )
+                tool_calls_results.append(ChatMessage.create_tool_from_called_function(called_fnc))
 
             if not tool_calls_info:
                 return
@@ -1035,8 +1010,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
             fnc_ctx = self.fnc_ctx
             if (
                 fnc_ctx
-                and new_speech_handle.fnc_nested_depth
-                >= self._opts.max_nested_fnc_calls
+                and new_speech_handle.fnc_nested_depth >= self._opts.max_nested_fnc_calls
                 and not self._llm.capabilities.requires_persistent_functions
             ):
                 if len(fnc_ctx.ai_functions) > 1:
@@ -1076,9 +1050,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
         await nested_speech_task
 
         if not fnc_task.done():
-            logger.debug(
-                "cancelling function calls task", extra={"speech_id": speech_handle.id}
-            )
+            logger.debug("cancelling function calls task", extra={"speech_id": speech_handle.id})
             fnc_task.cancel()
 
         # mark the speech as done
@@ -1089,9 +1061,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
         speech_id: str,
         source: str | LLMStream | AsyncIterable[str],
     ) -> SynthesisHandle:
-        assert self._agent_output is not None, (
-            "agent output should be initialized when ready"
-        )
+        assert self._agent_output is not None, "agent output should be initialized when ready"
 
         tk = SpeechDataContextVar.set(SpeechData(speech_id))
 
@@ -1178,6 +1148,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
                 continue
 
             if speech.allow_interruptions:
+                logger.debug(f"Interrupting speech: {speech.id}")
                 speech.interrupt()
 
         logger.debug(
@@ -1216,10 +1187,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
         if self._playing_speech is None:
             return False
 
-        if (
-            not self._playing_speech.allow_interruptions
-            or self._playing_speech.interrupted
-        ):
+        if not self._playing_speech.allow_interruptions or self._playing_speech.interrupted:
             return False
 
         if self._opts.int_min_words != 0:
