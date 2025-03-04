@@ -18,11 +18,13 @@ import asyncio
 import base64
 import json
 import os
+import time
 import weakref
 from dataclasses import dataclass
 from typing import Any, Optional
 
 import aiohttp
+from app_config import AppConfig
 from livekit.agents import (
     APIConnectionError,
     APIConnectOptions,
@@ -289,6 +291,14 @@ class SynthesizeStream(tts.SynthesizeStream):
         ).stream()
 
     async def _run(self) -> None:
+        if (
+            not AppConfig()
+            .get_call_metadata()
+            .get("first_sentence_synthesis_start_time")
+        ):
+            AppConfig().get_call_metadata().update(
+                {"first_sentence_synthesis_start_time": time.time()}
+            )
         request_id = utils.shortuuid()
 
         async def _sentence_stream_task(ws: aiohttp.ClientWebSocketResponse):
