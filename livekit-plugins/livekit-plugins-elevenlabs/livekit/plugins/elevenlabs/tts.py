@@ -534,6 +534,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                     segment_id=segment_id,
                 )
                 async for frame in decoder:
+                    logger.info(f"Pushing frame to emitter - {frame}")
                     emitter.push(frame)
                 emitter.flush()
 
@@ -579,12 +580,6 @@ class SynthesizeStream(tts.SynthesizeStream):
                             logger.info(
                                 f"expected_text_without_spaces: {expected_text_without_spaces}"
                             )
-
-                            if any(received_text.strip().endswith(p) for p in [".", "?", "!"]):
-                                logger.info(
-                                    f"ABOUT TO SEND ANOTHER FLUSH BECAUSE OF SENTENCE ENDING PUNCTUATION- {received_text}"
-                                )
-                                await ws_conn.send_str(json.dumps({"flush": True}))
 
                             if (
                                 AppConfig().get_call_metadata().get("should_end_decoder")
