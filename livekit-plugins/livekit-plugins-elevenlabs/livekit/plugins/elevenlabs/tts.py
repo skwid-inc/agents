@@ -589,12 +589,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                                 # received_text = ""
                                 # decoder.force_notify()
 
-                            if (
-                                received_text == expected_text_without_spaces
-                                and received_text.endswith(
-                                    AppConfig().get_call_metadata().get("should_end_decoder", False)
-                                )
-                            ):
+                            if received_text == expected_text_without_spaces:
                                 logger.info("\033[36mENDING INPUT FOR DECODER\033[0m")
                                 decoder.end_input()
                                 break
