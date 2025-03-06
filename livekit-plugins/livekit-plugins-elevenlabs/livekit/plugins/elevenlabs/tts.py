@@ -19,6 +19,7 @@ import base64
 import dataclasses
 import json
 import os
+import time
 import weakref
 from dataclasses import dataclass
 from typing import Any, List, Optional
@@ -26,6 +27,7 @@ from typing import Any, List, Optional
 import aiohttp
 import numpy as np
 import soundfile as sf
+from app_config import AppConfig
 from filler_phrases import get_wav_if_available
 from livekit import rtc
 from livekit.agents import (
@@ -521,6 +523,13 @@ class SynthesizeStream(tts.SynthesizeStream):
                     logger.info(f"data_pkt: {data_pkt}")
                     await ws_conn.send_str(json.dumps(data_pkt))
                     if any(text.strip().endswith(p) for p in [".", "?", "!"]):
+                        if not AppConfig().call_metadata.get(
+                            "first_sentence_synthesis_start_time"
+                        ):
+                            AppConfig().call_metadata[
+                                "first_sentence_synthesis_start_time"
+                            ] = time.time()
+
                         logger.info("Sending flush due to sentence-ending punctuation")
                         await ws_conn.send_str(json.dumps({"flush": True}))
                 if xml_content:
