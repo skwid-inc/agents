@@ -586,12 +586,27 @@ class SynthesizeStream(tts.SynthesizeStream):
                             )
 
                             if (
+                                received_text
+                                == expected_text_without_spaces
+                                # and received_text.endswith(
+                                #     AppConfig().get_call_metadata()["last_word"]
+                                # )
+                            ):
+                                logger.info("ABOUT TO END INPUT")
+                                expected_text = ""
+                                received_text = ""
+                                decoder.end_input()
+                                decoder = utils.codecs.AudioStreamDecoder(
+                                    sample_rate=self._opts.sample_rate,
+                                    num_channels=1,
+                                )
+
+                            if (
                                 received_text == expected_text_without_spaces
                                 and received_text.endswith(
                                     AppConfig().get_call_metadata()["last_word"]
                                 )
                             ):
-                                logger.info("ABOUT TO END INPUT")
                                 decoder.end_input()
                                 break
 
