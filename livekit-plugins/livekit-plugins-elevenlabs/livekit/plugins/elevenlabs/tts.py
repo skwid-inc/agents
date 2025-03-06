@@ -340,6 +340,7 @@ class ChunkedStream(tts.ChunkedStream):
             "voice_settings": voice_settings,
         }
 
+        logger.info("Initializing decoder")
         decoder = utils.codecs.AudioStreamDecoder(
             sample_rate=self._opts.sample_rate,
             num_channels=1,
@@ -466,6 +467,7 @@ class SynthesizeStream(tts.SynthesizeStream):
             segment_id = utils.shortuuid()
             expected_text = ""  # accumulate all tokens sent
 
+            logger.info("Initializing decoder")
             decoder = utils.codecs.AudioStreamDecoder(
                 sample_rate=self._opts.sample_rate,
                 num_channels=1,
@@ -578,12 +580,17 @@ class SynthesizeStream(tts.SynthesizeStream):
                             # )
 
                             logger.info(f"received_text: {received_text}")
-                            logger.info(f"expected_text: {expected_text}")
+                            # logger.info(f"expected_text: {expected_text}")
                             logger.info(
                                 f"expected_text_without_spaces: {expected_text_without_spaces}"
                             )
 
-                            if received_text == expected_text_without_spaces:
+                            if (
+                                received_text == expected_text_without_spaces
+                                and received_text.endswith(
+                                    AppConfig().get_call_metadata()["last_word"]
+                                )
+                            ):
                                 logger.info("ABOUT TO END INPUT")
                                 decoder.end_input()
                                 break
