@@ -79,6 +79,11 @@ class StreamBuffer:
             self._eof = True
             self._data_available.notify_all()
 
+    def force_notify(self):
+        print("Forcing notify")
+        with self._data_available:
+            self._data_available.notify_all()
+
     def close(self):
         self._buffer.close()
 
