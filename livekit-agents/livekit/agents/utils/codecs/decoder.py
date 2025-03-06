@@ -80,7 +80,7 @@ class StreamBuffer:
             self._data_available.notify_all()
 
     def force_notify(self):
-        print("Forcing notify")
+        print("StreamBuffer: Forcing notify")
         with self._data_available:
             self._data_available.notify_all()
 
@@ -134,7 +134,7 @@ class AudioStreamDecoder:
         self._input_buf.end_input()
 
     def force_notify(self):
-        print("Forcing notify")
+        print("AudioStreamDecoder: Forcing notify")
         self._input_buf.force_notify()
 
     def _decode_loop(self):
