@@ -5,13 +5,7 @@ from typing import AsyncIterable, Optional
 
 from .. import tokenize, utils
 from ..types import APIConnectOptions
-from .tts import (
-    TTS,
-    ChunkedStream,
-    SynthesizedAudio,
-    SynthesizeStream,
-    TTSCapabilities,
-)
+from .tts import TTS, ChunkedStream, SynthesizedAudio, SynthesizeStream, TTSCapabilities
 
 
 class StreamAdapter(TTS):
@@ -88,7 +82,10 @@ class StreamAdapterWrapper(SynthesizeStream):
         async def _synthesize():
             async for ev in self._sent_stream:
                 last_audio: SynthesizedAudio | None = None
-                async for audio in self._wrapped_tts.synthesize(ev.token):
+                self._conn_options.max_retry = 0
+                async for audio in self._wrapped_tts.synthesize(
+                    ev.token, conn_options=self._conn_options
+                ):
                     if last_audio is not None:
                         self._event_ch.send_nowait(last_audio)
 
