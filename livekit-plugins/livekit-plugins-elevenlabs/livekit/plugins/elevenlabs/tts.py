@@ -597,6 +597,16 @@ class SynthesizeStream(tts.SynthesizeStream):
                             logger.info(
                                 f"expected_text_without_spaces: {expected_text_without_spaces}"
                             )
+                            if (
+                                AppConfig()
+                                .get_call_metadata()
+                                .get("should_end_decoder")
+                            ):
+                                AppConfig().get_call_metadata()[
+                                    "should_end_decoder"
+                                ] = False
+                                decoder.end_input()
+                                break
                             # if received_text == expected_text_without_spaces:
                             #     decoder.end_input()
                             #     break
