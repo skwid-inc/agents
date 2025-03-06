@@ -579,6 +579,16 @@ class SynthesizeStream(tts.SynthesizeStream):
                             logger.info(
                                 f"expected_text_without_spaces: {expected_text_without_spaces}"
                             )
+
+                            if (
+                                any(received_text.strip().endswith(p) for p in [".", "?", "!"])
+                                # and "system" not in text.lower()
+                            ):
+                                logger.info(
+                                    f"ABOUT TO END DECODER BECAUSE OS SENTENCE ENDING PUNCTUATION- {received_text}"
+                                )
+                                decoder.end_input()
+                                break
                             if (
                                 AppConfig().get_call_metadata().get("should_end_decoder")
                             ) and received_text == expected_text_without_spaces:
