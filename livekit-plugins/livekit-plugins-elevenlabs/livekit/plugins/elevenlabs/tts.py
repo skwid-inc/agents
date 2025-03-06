@@ -561,9 +561,9 @@ class SynthesizeStream(tts.SynthesizeStream):
 
                             received_text += "".join(alignment.get("chars", [])).replace(" ", "")
                             expected_text_without_spaces = expected_text.replace(" ", "")
-                            logger.info(f"received_text: {received_text}")
+                            logger.info(f"received_text: ######{received_text}######")
                             logger.info(
-                                f"expected_text_without_spaces: {expected_text_without_spaces}"
+                                f"expected_text_without_spaces: ######{expected_text_without_spaces}######"
                             )
                             if received_text == expected_text_without_spaces:
                                 decoder.end_input()
