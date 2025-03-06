@@ -590,7 +590,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                                     request_id=request_id,
                                     segment_id=segment_id,
                                 )
-                                for frame in decoder:
+                                async for frame in decoder:
                                     logger.info(f"Pushing frame to emitter - {frame}")
                                     emitter.push(frame)
 
