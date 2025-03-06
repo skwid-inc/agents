@@ -581,12 +581,20 @@ class SynthesizeStream(tts.SynthesizeStream):
                                 f"expected_text_without_spaces: {expected_text_without_spaces}"
                             )
 
+                            if any(received_text.strip().endswith(p) for p in [".", "?", "!"]):
+                                logger.info(
+                                    f"ABOUT TO END INPUT BECAUSE OF SENTENCE ENDING PUNCTUATION - {received_text}"
+                                )
+                                decoder.end_input()
+
                             if (
                                 AppConfig().get_call_metadata().get("should_end_decoder")
                             ) and received_text == expected_text_without_spaces:
                                 AppConfig().get_call_metadata()["should_end_decoder"] = False
-                                logger.info(f"ABOUT TO END DECODER - {received_text}")
-                                decoder.end_input()
+                                logger.info(
+                                    f"ABOUT TO BREAK OUT OF THE WHILE TRUE - {received_text}"
+                                )
+                                # decoder.end_input()
                                 break
                             # if received_text == expected_text_without_spaces:
                             #     decoder.end_input()
