@@ -1,5 +1,11 @@
 # livekit-plugins-azure
 
+## 0.5.5
+
+### Patch Changes
+
+- feat: Azure.STT support profanity_option - [#1540](https://github.com/livekit/agents/pull/1540) ([@shiftu](https://github.com/shiftu))
+
 ## 0.5.4
 
 ### Patch Changes
