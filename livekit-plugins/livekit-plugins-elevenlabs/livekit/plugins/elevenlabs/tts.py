@@ -514,7 +514,9 @@ class SynthesizeStream(tts.SynthesizeStream):
                         else:
                             continue
 
-                    data_pkt = dict(text=f"{text} ")  # must always end with a space
+                    data_pkt = dict(
+                        text=f"{text.strip()} "
+                    )  # must always end with a space
 
                     # if any(text.strip().endswith(p) for p in [".", "?"]):
                     #     data_pkt = dict(text=text.strip())
