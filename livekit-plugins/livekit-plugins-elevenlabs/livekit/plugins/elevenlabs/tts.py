@@ -515,27 +515,27 @@ class SynthesizeStream(tts.SynthesizeStream):
                             continue
 
                     text = text.replace("Great!", "Great thank you.")
+                    text = text.replace("system.", "system, please hold.")
                     data_pkt = dict(
-                        text=f"{text.strip()} ",
-                        flush=any(text.strip().endswith(p) for p in [".", "?", "!"]),
+                        text=f"{text.strip()} "
                     )  # must always end with a space
 
                     self._mark_started()
                     logger.info(f"data_pkt: {data_pkt}")
                     await ws_conn.send_str(json.dumps(data_pkt))
-                    # if (
-                    #     any(text.strip().endswith(p) for p in [".", "?", "!"])
-                    #     and "system" not in text.lower()
-                    # ):
-                    #     if not AppConfig().call_metadata.get(
-                    #         "first_sentence_synthesis_start_time"
-                    #     ):
-                    #         AppConfig().call_metadata[
-                    #             "first_sentence_synthesis_start_time"
-                    #         ] = time.time()
+                    if (
+                        any(text.strip().endswith(p) for p in [".", "?", "!"])
+                        # and "system" not in text.lower()
+                    ):
+                        if not AppConfig().call_metadata.get(
+                            "first_sentence_synthesis_start_time"
+                        ):
+                            AppConfig().call_metadata[
+                                "first_sentence_synthesis_start_time"
+                            ] = time.time()
 
-                    #     logger.info("Sending flush due to sentence-ending punctuation")
-                    #     await ws_conn.send_str(json.dumps({"flush": True}))
+                        logger.info("Sending flush due to sentence-ending punctuation")
+                        await ws_conn.send_str(json.dumps({"flush": True}))
                 if xml_content:
                     logger.warning("11labs stream ended with incomplete xml content")
                 logger.info("Sending flush due to end of input")
