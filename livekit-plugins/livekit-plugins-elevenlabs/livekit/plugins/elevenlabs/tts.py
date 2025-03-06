@@ -507,7 +507,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                     # if any(text.strip().endswith(p) for p in [".", "?"]):
                     #     data_pkt = dict(text=text.strip())
                     self._mark_started()
-                    logger.info(f"data_pkt: {data_pkt}")
+                    logger.info(f"data_pkt: ######{data_pkt}######")
                     await ws_conn.send_str(json.dumps(data_pkt))
                     if any(text.strip().endswith(p) for p in [".", "?", "!"]):
                         logger.info(f"Sending flush due to sentence-ending punctuation in - {text}")
