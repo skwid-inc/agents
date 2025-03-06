@@ -424,7 +424,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                         # new segment (after flush for e.g)
                         word_stream = self._opts.word_tokenizer.stream()
                         self._segments_ch.send_nowait(word_stream)
-
+                    logger.info(f"Pushing text to word stream: {input}")
                     word_stream.push_text(input)
                 elif isinstance(input, self._FlushSentinel):
                     if word_stream is not None:
@@ -582,7 +582,8 @@ class SynthesizeStream(tts.SynthesizeStream):
                                 f"expected_text_without_spaces: {expected_text_without_spaces}"
                             )
 
-                            if received_text == expected_text_without_spaces:
+                            if received_text == expected_text:
+                                logger.info("ABOUT TO END INPUT")
                                 decoder.end_input()
                                 break
 
