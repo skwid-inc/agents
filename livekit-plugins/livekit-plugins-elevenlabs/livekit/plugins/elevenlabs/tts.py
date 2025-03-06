@@ -592,7 +592,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                             if (
                                 received_text == expected_text_without_spaces
                                 and received_text.endswith(
-                                    AppConfig().get_call_metadata()["should_end_decoder"]
+                                    AppConfig().get_call_metadata()["last_word"]
                                 )
                             ):
                                 logger.info("\033[36mENDING INPUT FOR DECODER\033[0m")
