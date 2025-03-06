@@ -424,7 +424,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                         # new segment (after flush for e.g)
                         word_stream = self._opts.word_tokenizer.stream()
                         self._segments_ch.send_nowait(word_stream)
-                    logger.info(f"Pushing text to word stream: {input}")
+                    logger.info(f"Pushing text to word stream: ####{input}####")
                     word_stream.push_text(input)
                 elif isinstance(input, self._FlushSentinel):
                     if word_stream is not None:
@@ -490,6 +490,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                 async for data in word_stream:
                     text = data.token
                     expected_text += text
+                    logger.info(f"expected_text: ####{expected_text}####")
                     # send the xml phoneme in one go
                     if (
                         self._opts.enable_ssml_parsing
