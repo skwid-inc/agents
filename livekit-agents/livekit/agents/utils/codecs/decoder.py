@@ -106,6 +106,10 @@ class AudioStreamDecoder:
                 "You haven't included the 'codecs' optional dependencies. Please install the 'codecs' extra by running `pip install livekit-agents[codecs]`"
             )
 
+        print(
+            f"Initializing decoder with sample rate: {sample_rate} and num channels: {num_channels}"
+        )
+
         self._sample_rate = sample_rate
         self._layout = "mono"
         if num_channels == 2:

@@ -596,10 +596,6 @@ class SynthesizeStream(tts.SynthesizeStream):
                                 expected_text = ""
                                 received_text = ""
                                 decoder.end_input()
-                                decoder = utils.codecs.AudioStreamDecoder(
-                                    sample_rate=self._opts.sample_rate,
-                                    num_channels=1,
-                                )
 
                             if (
                                 received_text == expected_text_without_spaces
