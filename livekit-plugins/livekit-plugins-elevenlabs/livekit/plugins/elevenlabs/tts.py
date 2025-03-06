@@ -519,8 +519,6 @@ class SynthesizeStream(tts.SynthesizeStream):
                         text=f"{text.strip()} "
                     )  # must always end with a space
 
-                    if any(text.strip().endswith(p) for p in [".", "?"]):
-                        data_pkt = dict(text=text.strip())
                     self._mark_started()
                     logger.info(f"data_pkt: {data_pkt}")
                     await ws_conn.send_str(json.dumps(data_pkt))
@@ -536,6 +534,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                         await ws_conn.send_str(json.dumps({"flush": True}))
                 if xml_content:
                     logger.warning("11labs stream ended with incomplete xml content")
+                logger.info("Sending flush due to end of input")
                 await ws_conn.send_str(json.dumps({"flush": True}))
 
             # consumes from decoder and generates events
