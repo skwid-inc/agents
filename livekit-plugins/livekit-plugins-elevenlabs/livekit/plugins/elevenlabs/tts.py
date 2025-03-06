@@ -513,8 +513,8 @@ class SynthesizeStream(tts.SynthesizeStream):
                             continue
 
                     data_pkt = dict(text=f"{text} ")  # must always end with a space
-                    if any(text.strip().endswith(p) for p in [".", "?"]):
-                        data_pkt = dict(text=text.strip())
+                    # if any(text.strip().endswith(p) for p in [".", "?"]):
+                    #     data_pkt = dict(text=text.strip())
                     self._mark_started()
                     logger.info(f"data_pkt: {data_pkt}")
                     await ws_conn.send_str(json.dumps(data_pkt))
