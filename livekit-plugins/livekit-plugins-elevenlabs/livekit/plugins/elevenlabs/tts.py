@@ -27,8 +27,6 @@ from typing import Any, List, Optional
 import aiohttp
 import numpy as np
 import soundfile as sf
-from app_config import AppConfig
-from filler_phrases import get_wav_if_available
 from livekit import rtc
 from livekit.agents import (
     APIConnectionError,
@@ -40,6 +38,9 @@ from livekit.agents import (
     utils,
 )
 from scipy import signal
+
+from app_config import AppConfig
+from filler_phrases import get_wav_if_available
 
 from .log import logger
 from .models import TTSEncoding, TTSModels
@@ -244,9 +245,7 @@ class TTS(tts.TTS):
             session=self._ensure_session(),
         )
 
-    async def _play_presynthesized_audio(
-        self, wav_path: str, event_ch, input_text: str
-    ) -> None:
+    async def _play_presynthesized_audio(self, wav_path: str, event_ch, input_text: str) -> None:
         logger.info(f"Playing Presynthesized Audio: {input_text}")
         request_id = utils.shortuuid()
 
@@ -255,9 +254,7 @@ class TTS(tts.TTS):
         audio_array, file_sample_rate = sf.read(str(wav_path), dtype="int16")
 
         logger.info(f"File sample rate: {file_sample_rate}")
-        logger.info(
-            f"WAV file channels: {1 if audio_array.ndim == 1 else audio_array.shape[1]}"
-        )
+        logger.info(f"WAV file channels: {1 if audio_array.ndim == 1 else audio_array.shape[1]}")
         logger.info(f"Target sample rate: {self._opts.sample_rate}")
 
         # Convert stereo to mono if needed
@@ -267,13 +264,9 @@ class TTS(tts.TTS):
 
         # Resample if needed
         if file_sample_rate != self._opts.sample_rate:
-            logger.info(
-                f"Resampling from {file_sample_rate} to {self._opts.sample_rate}"
-            )
+            logger.info(f"Resampling from {file_sample_rate} to {self._opts.sample_rate}")
             # Calculate number of samples for the target sample rate
-            num_samples = int(
-                len(audio_array) * self._opts.sample_rate / file_sample_rate
-            )
+            num_samples = int(len(audio_array) * self._opts.sample_rate / file_sample_rate)
             audio_array = signal.resample(audio_array, num_samples)
 
         # Process audio in chunks
@@ -306,9 +299,7 @@ class TTS(tts.TTS):
         logger.info(f"Sent Presynthesized Audio to event channel")
         return
 
-    def stream(
-        self, *, conn_options: Optional[APIConnectOptions] = None
-    ) -> "SynthesizeStream":
+    def stream(self, *, conn_options: Optional[APIConnectOptions] = None) -> "SynthesizeStream":
         stream = SynthesizeStream(tts=self, pool=self._pool, opts=self._opts)
         self._streams.add(stream)
         return stream
@@ -488,9 +479,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                     if self._opts.voice.settings
                     else None
                 ),
-                generation_config=dict(
-                    chunk_length_schedule=self._opts.chunk_length_schedule
-                ),
+                generation_config=dict(chunk_length_schedule=self._opts.chunk_length_schedule),
             )
             await ws_conn.send_str(json.dumps(init_pkt))
 
@@ -515,9 +504,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                             continue
 
                     # text = text.replace("system.", "system, please hold.")
-                    data_pkt = dict(
-                        text=f"{text.strip()} "
-                    )  # must always end with a space
+                    data_pkt = dict(text=f"{text.strip()} ")  # must always end with a space
 
                     self._mark_started()
                     logger.info(f"data_pkt: {data_pkt}")
@@ -526,9 +513,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                         any(text.strip().endswith(p) for p in [".", "?", "!"])
                         # and "system" not in text.lower()
                     ):
-                        if not AppConfig().call_metadata.get(
-                            "first_sentence_synthesis_start_time"
-                        ):
+                        if not AppConfig().call_metadata.get("first_sentence_synthesis_start_time"):
                             AppConfig().call_metadata[
                                 "first_sentence_synthesis_start_time"
                             ] = time.time()
@@ -580,12 +565,8 @@ class SynthesizeStream(tts.SynthesizeStream):
                         decoder.push(b64data)
 
                         if alignment := data.get("normalizedAlignment"):
-                            received_text += "".join(
-                                alignment.get("chars", [])
-                            ).replace(" ", "")
-                            expected_text_without_spaces = expected_text.replace(
-                                " ", ""
-                            )
+                            received_text += "".join(alignment.get("chars", [])).replace(" ", "")
+                            expected_text_without_spaces = expected_text.replace(" ", "")
                             # expected_text_without_spaces = (
                             #     expected_text_without_spaces.replace(
                             #         "system.", "system,pleasehold."
@@ -598,16 +579,12 @@ class SynthesizeStream(tts.SynthesizeStream):
                                 f"expected_text_without_spaces: {expected_text_without_spaces}"
                             )
                             if (
-                                AppConfig()
-                                .get_call_metadata()
-                                .get("should_end_decoder")
+                                AppConfig().get_call_metadata().get("should_end_decoder")
                             ) and received_text == expected_text_without_spaces:
-                                AppConfig().get_call_metadata()[
-                                    "should_end_decoder"
-                                ] = False
-                                logger.info("ABOUT TO END DECODER")
+                                AppConfig().get_call_metadata()["should_end_decoder"] = False
+                                logger.info(f"ABOUT TO END DECODER - {received_text}")
                                 decoder.end_input()
-                                break
+                                # break
                             # if received_text == expected_text_without_spaces:
                             #     decoder.end_input()
                             #     break
