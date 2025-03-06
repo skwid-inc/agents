@@ -151,9 +151,11 @@ class AudioStreamDecoder:
         try:
             # TODO: handle error where audio stream isn't found
             if not audio_stream:
+                print("No audio stream found, returning")
                 return
             for frame in container.decode(audio_stream):
                 if self._closed:
+                    print("Decoder closed, returning")
                     return
                 for resampled_frame in resampler.resample(frame):
                     nchannels = len(resampled_frame.layout.channels)
@@ -168,6 +170,7 @@ class AudioStreamDecoder:
                         )
                     )
         finally:
+            print("Closing output channel")
             self._output_ch.close()
 
     def __aiter__(self) -> AsyncIterator[rtc.AudioFrame]:
@@ -180,6 +183,9 @@ class AudioStreamDecoder:
             raise StopAsyncIteration
 
     async def aclose(self):
+        import traceback
+
+        print(traceback.format_exc())
         if self._closed:
             return
         self._closed = True
