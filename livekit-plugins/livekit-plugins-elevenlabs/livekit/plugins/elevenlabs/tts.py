@@ -585,11 +585,10 @@ class SynthesizeStream(tts.SynthesizeStream):
                                 logger.info(
                                     f"ABOUT TO END INPUT BECAUSE OF SENTENCE ENDING PUNCTUATION - {received_text}"
                                 )
-                                decoder.end_input()
-                                received_text = ""
-                                expected_text = ""
-                                break
-
+                                # decoder.end_input()
+                                # received_text = ""
+                                # expected_text = ""
+                                decoder.force_notify()
                             if (
                                 AppConfig().get_call_metadata().get("should_end_decoder")
                             ) and received_text == expected_text_without_spaces:
@@ -597,7 +596,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                                 logger.info(
                                     f"ABOUT TO BREAK OUT OF THE WHILE TRUE - {received_text}"
                                 )
-                                # decoder.end_input()
+                                decoder.end_input()
                                 break
                             # if received_text == expected_text_without_spaces:
                             #     decoder.end_input()
