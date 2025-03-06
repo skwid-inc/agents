@@ -133,6 +133,10 @@ class AudioStreamDecoder:
     def end_input(self):
         self._input_buf.end_input()
 
+    def force_notify(self):
+        print("Forcing notify")
+        self._input_buf._data_available.notify_all()
+
     def _decode_loop(self):
         container = av.open(self._input_buf)
         audio_stream = next(s for s in container.streams if s.type == "audio")
