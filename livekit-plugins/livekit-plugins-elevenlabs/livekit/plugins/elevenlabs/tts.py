@@ -580,25 +580,19 @@ class SynthesizeStream(tts.SynthesizeStream):
                                 f"expected_text_without_spaces: {expected_text_without_spaces}"
                             )
 
-                            if (
-                                any(received_text.strip().endswith(p) for p in [".", "?", "!"])
-                                # and "system" not in text.lower()
-                            ):
+                            if any(received_text.strip().endswith(p) for p in [".", "?", "!"]):
                                 logger.info(
-                                    f"ABOUT TO END DECODER BECAUSE OS SENTENCE ENDING PUNCTUATION- {received_text}"
+                                    f"ABOUT TO SEND ANOTHER FLUSH BECAUSE OF SENTENCE ENDING PUNCTUATION- {received_text}"
                                 )
-                                decoder.end_input()
-                                if AppConfig().get_call_metadata().get("should_end_decoder"):
-                                    logger.info(f"BREAKING OUT OF THE WHILE TRUE - {received_text}")
-                                    break
+                                await ws_conn.send_str(json.dumps({"flush": True}))
 
-                            # if (
-                            #     AppConfig().get_call_metadata().get("should_end_decoder")
-                            # ) and received_text == expected_text_without_spaces:
-                            #     AppConfig().get_call_metadata()["should_end_decoder"] = False
-                            #     logger.info(f"ABOUT TO END DECODER - {received_text}")
-                            #     decoder.end_input()
-                            #     break
+                            if (
+                                AppConfig().get_call_metadata().get("should_end_decoder")
+                            ) and received_text == expected_text_without_spaces:
+                                AppConfig().get_call_metadata()["should_end_decoder"] = False
+                                logger.info(f"ABOUT TO END DECODER - {received_text}")
+                                decoder.end_input()
+                                break
                             # if received_text == expected_text_without_spaces:
                             #     decoder.end_input()
                             #     break
