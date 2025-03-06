@@ -601,7 +601,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                                 AppConfig()
                                 .get_call_metadata()
                                 .get("should_end_decoder")
-                            ):
+                            ) and received_text == expected_text_without_spaces:
                                 AppConfig().get_call_metadata()[
                                     "should_end_decoder"
                                 ] = False
