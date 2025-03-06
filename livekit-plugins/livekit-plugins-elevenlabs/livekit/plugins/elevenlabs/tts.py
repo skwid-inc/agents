@@ -514,7 +514,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                         else:
                             continue
 
-                    text = text.replace("system.", "system, please hold.")
+                    text = text.replace("system.", "system please hold.")
                     data_pkt = dict(
                         text=f"{text.strip()} "
                     )  # must always end with a space
