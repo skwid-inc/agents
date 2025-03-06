@@ -513,6 +513,8 @@ class SynthesizeStream(tts.SynthesizeStream):
                             continue
 
                     data_pkt = dict(text=f"{text} ")  # must always end with a space
+                    if "great" in text.lower():
+                        data_pkt = dict(text=f" {text} ")
                     # if any(text.strip().endswith(p) for p in [".", "?"]):
                     #     data_pkt = dict(text=text.strip())
                     self._mark_started()
