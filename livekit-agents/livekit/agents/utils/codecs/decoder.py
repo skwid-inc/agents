@@ -154,6 +154,7 @@ class AudioStreamDecoder:
                 print("No audio stream found, returning")
                 return
             for frame in container.decode(audio_stream):
+                print("Decoding frame")
                 if self._closed:
                     print("Decoder closed, returning")
                     return
@@ -185,6 +186,7 @@ class AudioStreamDecoder:
     async def aclose(self):
         import traceback
 
+        print(f"Closing decoder")
         print(traceback.format_exc())
         if self._closed:
             return

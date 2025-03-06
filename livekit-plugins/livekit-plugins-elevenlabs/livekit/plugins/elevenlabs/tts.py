@@ -585,17 +585,11 @@ class SynthesizeStream(tts.SynthesizeStream):
                                 f"expected_text_without_spaces: {expected_text_without_spaces}"
                             )
 
-                            if (
-                                received_text
-                                == expected_text_without_spaces
-                                # and received_text.endswith(
-                                #     AppConfig().get_call_metadata()["last_word"]
-                                # )
-                            ):
+                            if any(received_text.strip().endswith(p) for p in [".", "?", "!"]):
                                 logger.info("ABOUT TO END INPUT")
-                                expected_text = ""
-                                received_text = ""
-                                decoder.end_input()
+                                # expected_text = ""
+                                # received_text = ""
+                                decoder.force_notify()
 
                             if (
                                 received_text == expected_text_without_spaces
