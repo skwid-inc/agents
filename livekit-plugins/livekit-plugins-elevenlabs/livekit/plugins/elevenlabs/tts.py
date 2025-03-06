@@ -585,10 +585,23 @@ class SynthesizeStream(tts.SynthesizeStream):
                                 logger.info(
                                     f"ABOUT TO END INPUT BECAUSE OF SENTENCE ENDING PUNCTUATION - {received_text}"
                                 )
-                                # decoder.end_input()
-                                # received_text = ""
-                                # expected_text = ""
-                                decoder.force_notify()
+                                emitter = tts.SynthesizedAudioEmitter(
+                                    event_ch=self._event_ch,
+                                    request_id=request_id,
+                                    segment_id=segment_id,
+                                )
+                                for frame in decoder:
+                                    logger.info(f"Pushing frame to emitter - {frame}")
+                                    emitter.push(frame)
+
+                            # async for frame in decoder:
+                            #     logger.info(f"Pushing frame to emitter - {frame}")
+
+                            # emitter.flush()
+                            # decoder.end_input()
+                            # received_text = ""
+                            # expected_text = ""
+                            # decoder.force_notify()
                             if (
                                 AppConfig().get_call_metadata().get("should_end_decoder")
                             ) and received_text == expected_text_without_spaces:
@@ -597,6 +610,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                                     f"ABOUT TO BREAK OUT OF THE WHILE TRUE - {received_text}"
                                 )
                                 decoder.end_input()
+                                emitter.flush()
                                 break
                             # if received_text == expected_text_without_spaces:
                             #     decoder.end_input()
@@ -619,7 +633,7 @@ class SynthesizeStream(tts.SynthesizeStream):
             tasks = [
                 asyncio.create_task(send_task()),
                 asyncio.create_task(recv_task()),
-                asyncio.create_task(generate_task()),
+                # asyncio.create_task(generate_task()),
             ]
             try:
                 await asyncio.gather(*tasks)
