@@ -578,18 +578,16 @@ class SynthesizeStream(tts.SynthesizeStream):
                             #         "system.", "system,pleasehold."
                             #     )
                             # )
-
-                            logger.info(f"received_text: {received_text}")
-                            # logger.info(f"expected_text: {expected_text}")
+                            logger.info(f"\033[36mreceived_text: {received_text}\033[0m")
                             logger.info(
-                                f"expected_text_without_spaces: {expected_text_without_spaces}"
+                                f"\033[36mexpected_text_without_spaces: {expected_text_without_spaces}\033[0m"
                             )
 
                             if any(received_text.strip().endswith(p) for p in [".", "?", "!"]):
-                                logger.info("ABOUT TO END INPUT")
+                                logger.info("\033[36mRECEIVED AN ENTIRE SENTENCE\033[0m")
                                 # expected_text = ""
                                 # received_text = ""
-                                decoder.force_notify()
+                                # decoder.force_notify()
 
                             if (
                                 received_text == expected_text_without_spaces
@@ -597,6 +595,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                                     AppConfig().get_call_metadata()["last_word"]
                                 )
                             ):
+                                logger.info("\033[36mENDING INPUT FOR DECODER\033[0m")
                                 decoder.end_input()
                                 break
 
