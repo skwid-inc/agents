@@ -522,7 +522,10 @@ class SynthesizeStream(tts.SynthesizeStream):
                     self._mark_started()
                     logger.info(f"data_pkt: {data_pkt}")
                     await ws_conn.send_str(json.dumps(data_pkt))
-                    if any(text.strip().endswith(p) for p in [".", "?", "!"]):
+                    if (
+                        any(text.strip().endswith(p) for p in [".", "?", "!"])
+                        and "system" not in text.lower()
+                    ):
                         if not AppConfig().call_metadata.get(
                             "first_sentence_synthesis_start_time"
                         ):
@@ -534,8 +537,8 @@ class SynthesizeStream(tts.SynthesizeStream):
                         await ws_conn.send_str(json.dumps({"flush": True}))
                 if xml_content:
                     logger.warning("11labs stream ended with incomplete xml content")
-                # logger.info("Sending flush due to end of input")
-                # await ws_conn.send_str(json.dumps({"flush": True}))
+                logger.info("Sending flush due to end of input")
+                await ws_conn.send_str(json.dumps({"flush": True}))
 
             # consumes from decoder and generates events
             @utils.log_exceptions(logger=logger)
