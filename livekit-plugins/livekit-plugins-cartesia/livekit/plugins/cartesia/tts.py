@@ -274,9 +274,6 @@ class ChunkedStream(tts.ChunkedStream):
         self._opts, self._session = opts, session
 
     async def _run(self) -> None:
-        # Wait for 2 seconds and throw an exception
-        await asyncio.sleep(2)
-        raise Exception("Intentional exception after 2 second delay")
         logging.info(f"ChunkedStream _run with input text: {self._input_text}")
         print(f"get_wav_if_available for {self._input_text}")
         filler_phrase_wav = get_wav_if_available(self._input_text)
