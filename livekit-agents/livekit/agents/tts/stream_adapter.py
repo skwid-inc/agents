@@ -82,7 +82,6 @@ class StreamAdapterWrapper(SynthesizeStream):
         async def _synthesize():
             async for ev in self._sent_stream:
                 last_audio: SynthesizedAudio | None = None
-                self._conn_options.max_retry = 0
                 async for audio in self._wrapped_tts.synthesize(
                     ev.token, conn_options=self._conn_options
                 ):
