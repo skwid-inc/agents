@@ -585,7 +585,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                                 AppConfig().get_call_metadata()["should_end_decoder"] = False
                                 logger.info(f"ABOUT TO END DECODER - {received_text}")
                                 decoder.end_input()
-                                # break
+                                break
                             # if received_text == expected_text_without_spaces:
                             #     decoder.end_input()
                             #     break
