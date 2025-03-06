@@ -514,7 +514,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                         else:
                             continue
 
-                    text = text.replace("system.", "system please hold.")
+                    text = text.replace("system.", "system, please hold.")
                     data_pkt = dict(
                         text=f"{text.strip()} "
                     )  # must always end with a space
@@ -585,6 +585,11 @@ class SynthesizeStream(tts.SynthesizeStream):
                             ).replace(" ", "")
                             expected_text_without_spaces = expected_text.replace(
                                 " ", ""
+                            )
+                            expected_text_without_spaces = (
+                                expected_text_without_spaces.replace(
+                                    "system.", "system, please hold."
+                                )
                             )
                             logger.info(f"received_text: {received_text}")
                             logger.info(f"expected_text: {expected_text}")
