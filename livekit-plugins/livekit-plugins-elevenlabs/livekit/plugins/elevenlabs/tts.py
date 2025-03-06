@@ -586,6 +586,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                                     f"ABOUT TO END INPUT BECAUSE OF SENTENCE ENDING PUNCTUATION - {received_text}"
                                 )
                                 decoder.end_input()
+                                received_text = ""
 
                             if (
                                 AppConfig().get_call_metadata().get("should_end_decoder")
