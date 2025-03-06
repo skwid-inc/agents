@@ -588,14 +588,17 @@ class SynthesizeStream(tts.SynthesizeStream):
                                     f"ABOUT TO END DECODER BECAUSE OS SENTENCE ENDING PUNCTUATION- {received_text}"
                                 )
                                 decoder.end_input()
-                                break
-                            if (
-                                AppConfig().get_call_metadata().get("should_end_decoder")
-                            ) and received_text == expected_text_without_spaces:
-                                AppConfig().get_call_metadata()["should_end_decoder"] = False
-                                logger.info(f"ABOUT TO END DECODER - {received_text}")
-                                decoder.end_input()
-                                break
+                                if AppConfig().get_call_metadata().get("should_end_decoder"):
+                                    logger.info(f"BREAKING OUT OF THE WHILE TRUE - {received_text}")
+                                    break
+
+                            # if (
+                            #     AppConfig().get_call_metadata().get("should_end_decoder")
+                            # ) and received_text == expected_text_without_spaces:
+                            #     AppConfig().get_call_metadata()["should_end_decoder"] = False
+                            #     logger.info(f"ABOUT TO END DECODER - {received_text}")
+                            #     decoder.end_input()
+                            #     break
                             # if received_text == expected_text_without_spaces:
                             #     decoder.end_input()
                             #     break
