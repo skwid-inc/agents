@@ -512,6 +512,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                     if any(text.strip().endswith(p) for p in [".", "?", "!"]):
                         logger.info(f"Sending flush due to sentence-ending punctuation in - {text}")
                         await ws_conn.send_str(json.dumps({"flush": True}))
+                        logger.info(f"sent flush - {text}")
                 if xml_content:
                     logger.warning("11labs stream ended with incomplete xml content")
                 await ws_conn.send_str(json.dumps({"flush": True}))
