@@ -585,13 +585,13 @@ class SynthesizeStream(tts.SynthesizeStream):
                             ).replace(" ", "")
                             expected_text_without_spaces = expected_text.replace(
                                 " ", ""
-                            
+                            )
                             expected_text_without_spaces = (
                                 expected_text_without_spaces.replace(
                                     "system.", "system,pleasehold."
                                 )
-                            ))
-                            
+                            )
+
                             logger.info(f"received_text: {received_text}")
                             logger.info(f"expected_text: {expected_text}")
                             logger.info(
