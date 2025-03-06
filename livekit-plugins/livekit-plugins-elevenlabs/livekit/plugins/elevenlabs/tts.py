@@ -542,6 +542,7 @@ class SynthesizeStream(tts.SynthesizeStream):
             async def recv_task():
                 nonlocal expected_text
                 received_text = ""
+                logger.info(f"expected_text before the while TRUE : {expected_text}")
 
                 while True:
                     msg = await ws_conn.receive()
