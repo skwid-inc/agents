@@ -588,6 +588,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                                 decoder.end_input()
                                 received_text = ""
                                 expected_text = ""
+                                break
 
                             if (
                                 AppConfig().get_call_metadata().get("should_end_decoder")
