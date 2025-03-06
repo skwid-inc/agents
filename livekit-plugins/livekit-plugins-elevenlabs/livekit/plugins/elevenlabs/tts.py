@@ -571,6 +571,11 @@ class SynthesizeStream(tts.SynthesizeStream):
                             expected_text_without_spaces = expected_text.replace(
                                 " ", ""
                             )
+                            logger.info(f"received_text: {received_text}")
+                            logger.info(f"expected_text: {expected_text}")
+                            logger.info(
+                                f"expected_text_without_spaces: {expected_text_without_spaces}"
+                            )
                             if received_text == expected_text_without_spaces:
                                 decoder.end_input()
                                 break
