@@ -429,7 +429,9 @@ class SynthesizeStream(tts.SynthesizeStream):
                     logger.info(f"Pushing text to word stream: ####{input}####")
                     word_stream.push_text(input)
                 elif isinstance(input, self._FlushSentinel):
+                    logger.info(f"Received flush sentinel")
                     if word_stream is not None:
+
                         word_stream.end_input()
                     word_stream = None
             logger.info(f"Closing segments ch")
@@ -525,6 +527,8 @@ class SynthesizeStream(tts.SynthesizeStream):
 
                         logger.info("Sending flush due to sentence-ending punctuation")
                         await ws_conn.send_str(json.dumps({"flush": True}))
+                    if AppConfig().call_metadata.get("should_end_decoder", False) is True:
+                        break
                 if xml_content:
                     logger.warning("11labs stream ended with incomplete xml content")
                 logger.info("Sending flush due to end of input")
