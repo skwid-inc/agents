@@ -538,8 +538,11 @@ class SynthesizeStream(tts.SynthesizeStream):
                                 "first_sentence_synthesis_start_time"
                             ] = time.time()
 
-                        logger.info("Sending flush due to sentence-ending punctuation")
-                        await ws_conn.send_str(json.dumps({"flush": True}))
+                        # logger.info(
+                        #     "Sending flush due to sentence-ending punctuation only if it is open"
+                        # )
+                        # if not ws_conn.closed:
+                        #     await ws_conn.send_str(json.dumps({"flush": True}))
                 if xml_content:
                     logger.warning("11labs stream ended with incomplete xml content")
                 logger.info("Sending flush due to end of input")
