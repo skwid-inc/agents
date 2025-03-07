@@ -412,6 +412,9 @@ class SynthesizeStream(tts.SynthesizeStream):
             """tokenize text from the input_ch to words"""
             word_stream = None
             async for input in self._input_ch:
+                logger.info(f"received input with type: {type(input)}")
+                logger.info(f"Received input: {input}")
+
                 if isinstance(input, str):
                     # Check for filler phrases
                     filler_phrase_wav = get_wav_if_available(input)
