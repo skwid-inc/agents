@@ -428,12 +428,17 @@ class SynthesizeStream(tts.SynthesizeStream):
                         self._segments_ch.send_nowait(word_stream)
                     logger.info(f"Pushing text to word stream: ####{input}####")
                     word_stream.push_text(input)
+                elif isinstance(input, self._ToolEndSentinel):
+                    logger.info(f"Received tool end sentinel")
+                    word_stream.push_text("SAIKRISHNA")
+
                 elif isinstance(input, self._FlushSentinel):
                     logger.info(f"Received flush sentinel")
                     if word_stream is not None:
 
                         word_stream.end_input()
                     word_stream = None
+
             logger.info(f"Closing segments ch")
             self._segments_ch.close()
 
