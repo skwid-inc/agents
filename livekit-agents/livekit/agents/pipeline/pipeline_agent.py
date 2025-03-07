@@ -303,6 +303,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
 
         self._last_final_transcript_time: float | None = None
         self._last_speech_time: float | None = None
+        self._last_final_transcript_event: stt.SpeechEvent | None = None
 
     @property
     def fnc_ctx(self) -> FunctionContext | None:
@@ -587,14 +588,39 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
             logger.debug(f"Interim transcript text: {text}")
             interim_words = self._opts.transcription.word_tokenizer.tokenize(text=text)
             logger.debug(f"Interim words: {interim_words}")
-            if len(interim_words) > 1:
-                logger.debug(
-                    f"Interim words are more than 1: {len(interim_words)}, so trying to interrupt"
-                )
-                self._interrupt_if_possible()
+
+            if self._last_final_transcript_event is not None:
+                last_event_data = self._last_final_transcript_event.alternatives[0]
+                if ev.alternatives[0].start_time == last_event_data.start_time:
+                    interim_words_for_last_event = self._opts.transcription.word_tokenizer.tokenize(
+                        text=last_event_data.text
+                    )
+                    if len(interim_words_for_last_event) - len(interim_words) > 1:
+                        logger.debug(
+                            f"Detected word deletion in interim transcript: Previous word count={len(interim_words_for_last_event)}, Current word count={len(interim_words)}. Attempting interruption.",
+                            extra={
+                                "previous_words": interim_words_for_last_event,
+                                "current_words": interim_words,
+                                "start_time": ev.alternatives[0].start_time,
+                            },
+                        )
+                        self._interrupt_if_possible()
+                elif ev.alternatives[0].start_time > last_event_data.start_time:
+                    if len(interim_words) > 1:
+                        logger.debug(
+                            f"New speech segment detected with multiple words: Word count={len(interim_words)}. Attempting interruption.",
+                            extra={
+                                "words": interim_words,
+                                "start_time": ev.alternatives[0].start_time,
+                                "previous_end_time": last_event_data.end_time,
+                            },
+                        )
+                        self._interrupt_if_possible()
 
         def _on_final_transcript(ev: stt.SpeechEvent) -> None:
+
             logger.debug(f"\033[90mFinal transcript: {ev.alternatives[0]}\033[0m")
+            self._last_final_transcript_event = ev
             new_transcript = ev.alternatives[0].text
             if not new_transcript:
                 return
