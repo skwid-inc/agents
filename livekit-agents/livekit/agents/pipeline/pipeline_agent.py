@@ -582,46 +582,46 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
 
         def _on_interim_transcript(ev: stt.SpeechEvent) -> None:
             logger.debug(f"\033[90mInterim transcript: {ev.alternatives[0]}\033[0m")
-            self._transcribed_interim_text = ev.alternatives[0].text
+            # self._transcribed_interim_text = ev.alternatives[0].text
 
-            text = self._transcribed_interim_text or self._transcribed_text
-            logger.debug(f"Interim transcript text: {text}")
-            interim_words = self._opts.transcription.word_tokenizer.tokenize(text=text)
+            # text = self._transcribed_interim_text or self._transcribed_text
+            # logger.debug(f"Interim transcript text: {text}")
+            # interim_words = self._opts.transcription.word_tokenizer.tokenize(text=text)
 
-            if self._last_final_transcript_event is not None:
-                last_event_data = self._last_final_transcript_event.alternatives[0]
-                logger.debug(f"Last final transcript event: {last_event_data.text}")
-                logger.debug(f"Interim words: {interim_words}")
-                logger.debug(f"Interim words request id: {ev.request_id}")
-                logger.debug(
-                    f"Last final transcript event request id: {self._last_final_transcript_event.request_id}"
-                )
+            # if self._last_final_transcript_event is not None:
+            # last_event_data = self._last_final_transcript_event.alternatives[0]
+            # logger.debug(f"Last final transcript event: {last_event_data.text}")
+            # logger.debug(f"Interim words: {interim_words}")
+            # logger.debug(f"Interim words request id: {ev.request_id}")
+            # logger.debug(
+            #     f"Last final transcript event request id: {self._last_final_transcript_event.request_id}"
+            # )
 
-                if ev.alternatives[0].start_time == last_event_data.start_time:
-                    interim_words_for_last_event = self._opts.transcription.word_tokenizer.tokenize(
-                        text=last_event_data.text
-                    )
-                    if len(interim_words_for_last_event) - len(interim_words) > 1:
-                        logger.debug(
-                            f"Detected word deletion in interim transcript: Previous word count={len(interim_words_for_last_event)}, Current word count={len(interim_words)}. Attempting interruption.",
-                            extra={
-                                "previous_words": interim_words_for_last_event,
-                                "current_words": interim_words,
-                                "start_time": ev.alternatives[0].start_time,
-                            },
-                        )
-                        self._interrupt_if_possible()
-                elif ev.alternatives[0].start_time > last_event_data.start_time:
-                    if len(interim_words) > 1:
-                        logger.debug(
-                            f"New speech segment detected with multiple words: Word count={len(interim_words)}. Attempting interruption.",
-                            extra={
-                                "words": interim_words,
-                                "start_time": ev.alternatives[0].start_time,
-                                "previous_end_time": last_event_data.end_time,
-                            },
-                        )
-                        self._interrupt_if_possible()
+            # if ev.alternatives[0].start_time == last_event_data.start_time:
+            #     interim_words_for_last_event = self._opts.transcription.word_tokenizer.tokenize(
+            #         text=last_event_data.text
+            #     )
+            #     if len(interim_words_for_last_event) - len(interim_words) > 1:
+            #         logger.debug(
+            #             f"Detected word deletion in interim transcript: Previous word count={len(interim_words_for_last_event)}, Current word count={len(interim_words)}. Attempting interruption.",
+            #             extra={
+            #                 "previous_words": interim_words_for_last_event,
+            #                 "current_words": interim_words,
+            #                 "start_time": ev.alternatives[0].start_time,
+            #             },
+            #         )
+            #         self._interrupt_if_possible()
+            # elif ev.alternatives[0].start_time > last_event_data.start_time:
+            #     if len(interim_words) > 1:
+            #         logger.debug(
+            #             f"New speech segment detected with multiple words: Word count={len(interim_words)}. Attempting interruption.",
+            #             extra={
+            #                 "words": interim_words,
+            #                 "start_time": ev.alternatives[0].start_time,
+            #                 "previous_end_time": last_event_data.end_time,
+            #             },
+            #         )
+            #         self._interrupt_if_possible()
 
         def _on_final_transcript(ev: stt.SpeechEvent) -> None:
 
