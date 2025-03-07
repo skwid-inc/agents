@@ -190,9 +190,7 @@ class RecognizeStream(ABC):
         """
         self._stt = stt
         self._conn_options = conn_options
-        self._input_ch = aio.Chan[
-            Union[rtc.AudioFrame, RecognizeStream._FlushSentinel]
-        ]()
+        self._input_ch = aio.Chan[Union[rtc.AudioFrame, RecognizeStream._FlushSentinel]]()
         self._event_ch = aio.Chan[SpeechEvent]()
 
         self._event_aiter, monitor_aiter = aio.itertools.tee(self._event_ch, 2)
@@ -239,18 +237,16 @@ class RecognizeStream(ABC):
 
                 num_retries += 1
 
-    async def _metrics_monitor_task(
-        self, event_aiter: AsyncIterable[SpeechEvent]
-    ) -> None:
+    async def _metrics_monitor_task(self, event_aiter: AsyncIterable[SpeechEvent]) -> None:
         """Task used to collect metrics"""
 
         start_time = time.perf_counter()
 
         async for ev in event_aiter:
             if ev.type == SpeechEventType.RECOGNITION_USAGE:
-                assert ev.recognition_usage is not None, (
-                    "recognition_usage must be provided for RECOGNITION_USAGE event"
-                )
+                assert (
+                    ev.recognition_usage is not None
+                ), "recognition_usage must be provided for RECOGNITION_USAGE event"
 
                 duration = time.perf_counter() - start_time
                 stt_metrics = STTMetrics(

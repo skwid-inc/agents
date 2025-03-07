@@ -604,7 +604,7 @@ class SpeechStream(stt.SpeechStream):
 
     def _process_stream_event(self, data: dict) -> None:
         assert self._opts.language is not None
-
+        logger.debug(f"Processing stream event: {data}")
         if data["type"] == "SpeechStarted":
             # This is a normal case. Deepgram's SpeechStarted events
             # are not correlated with speech_final or utterance end.
@@ -673,6 +673,7 @@ def live_transcription_to_speech_data(
     language: str, data: dict
 ) -> List[stt.SpeechData]:
     dg_alts = data["channel"]["alternatives"]
+    logger.debug(f"Deepgram alternatives: {dg_alts}")
 
     return [
         stt.SpeechData(
@@ -680,7 +681,7 @@ def live_transcription_to_speech_data(
             start_time=alt["words"][0]["start"] if alt["words"] else 0,
             end_time=alt["words"][-1]["end"] if alt["words"] else 0,
             confidence=alt["confidence"],
-            text=alt["transcript"],
+            text=" ".join([word["word"] for word in alt["words"]]),
         )
         for alt in dg_alts
     ]
