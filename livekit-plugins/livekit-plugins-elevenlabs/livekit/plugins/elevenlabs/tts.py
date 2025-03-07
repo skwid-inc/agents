@@ -556,6 +556,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                     request_id=request_id,
                     segment_id=segment_id,
                 )
+
                 async for frame in decoder:
                     logger.info(f"Pushing frame to emitter - {frame}")
                     emitter.push(frame)
@@ -589,6 +590,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                     data = json.loads(msg.data)
                     if data.get("audio"):
                         b64data = base64.b64decode(data["audio"])
+                        logger.info(f"Pushing data to decoder")
                         decoder.push(b64data)
 
                         if alignment := data.get("normalizedAlignment"):
@@ -612,7 +614,7 @@ class SynthesizeStream(tts.SynthesizeStream):
 
                             if received_text == expected_text_without_spaces:
                                 logger.info("\033[36mENDING INPUT FOR DECODER\033[0m")
-                                decoder.end_input()
+                                decoder.end_input()  # THIS FORCES US TO TALK
                                 break
 
                             # if any(received_text.strip().endswith(p) for p in [".", "?", "!"]):

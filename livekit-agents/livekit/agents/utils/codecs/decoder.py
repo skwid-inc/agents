@@ -24,9 +24,12 @@ try:
     import av  # noqa
 except ImportError:
     pass
+import logging
 import threading
 
 from livekit import rtc
+
+logger = logging.getLogger(__name__)
 
 
 class StreamBuffer:
@@ -80,7 +83,7 @@ class StreamBuffer:
             self._data_available.notify_all()
 
     def force_notify(self):
-        print("StreamBuffer: Forcing notify")
+        logger.info("StreamBuffer: Forcing notify")
         with self._data_available:
             self._data_available.notify_all()
 
@@ -106,7 +109,7 @@ class AudioStreamDecoder:
                 "You haven't included the 'codecs' optional dependencies. Please install the 'codecs' extra by running `pip install livekit-agents[codecs]`"
             )
 
-        print(
+        logger.info(
             f"Initializing decoder with sample rate: {sample_rate} and num channels: {num_channels}"
         )
 
@@ -129,6 +132,7 @@ class AudioStreamDecoder:
     def push(self, chunk: bytes):
         self._input_buf.write(chunk)
         if not self._started:
+            logger.info("Starting decode loop")
             self._started = True
             self._loop.run_in_executor(self.__class__._executor, self._decode_loop)
 
@@ -136,10 +140,11 @@ class AudioStreamDecoder:
         self._input_buf.end_input()
 
     def force_notify(self):
-        print("AudioStreamDecoder: Forcing notify")
+        logger.info("AudioStreamDecoder: Forcing notify")
         self._input_buf.force_notify()
 
     def _decode_loop(self):
+        logger.info("IN decode loop")
         container = av.open(self._input_buf)
         audio_stream = next(s for s in container.streams if s.type == "audio")
         resampler = av.AudioResampler(
@@ -151,17 +156,17 @@ class AudioStreamDecoder:
         try:
             # TODO: handle error where audio stream isn't found
             if not audio_stream:
-                print("No audio stream found, returning")
+                logger.info("No audio stream found, returning")
                 return
             for frame in container.decode(audio_stream):
-                print("Decoding frame")
+                logging.info("Decoding frame")
                 if self._closed:
-                    print("Decoder closed, returning")
+                    logger.info("Decoder closed, returning")
                     return
                 for resampled_frame in resampler.resample(frame):
                     nchannels = len(resampled_frame.layout.channels)
                     data = resampled_frame.to_ndarray().tobytes()
-                    print("Sending frame to output channel")
+                    logger.info("Sending frame to output channel")
                     self._output_ch.send_nowait(
                         rtc.AudioFrame(
                             data=data,
@@ -171,7 +176,7 @@ class AudioStreamDecoder:
                         )
                     )
         finally:
-            print("Closing output channel")
+            logger.info("Closing output channel")
             self._output_ch.close()
 
     def __aiter__(self) -> AsyncIterator[rtc.AudioFrame]:
@@ -186,8 +191,8 @@ class AudioStreamDecoder:
     async def aclose(self):
         import traceback
 
-        print(f"Closing decoder")
-        print(traceback.format_exc())
+        logger.info(f"Closing decoder")
+        logger.info(traceback.format_exc())
         if self._closed:
             return
         self._closed = True
