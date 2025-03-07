@@ -414,6 +414,8 @@ class SynthesizeStream(tts.SynthesizeStream):
             async for input in self._input_ch:
                 logger.info(f"received input with type: {type(input)}")
                 logger.info(f"Received input: {input}")
+                logger.info(f"input is an instance of str: {hasattr(input, '__class__')}")
+                logger.info(f"class name - {input.__class__.__name__}")
 
                 if isinstance(input, str):
                     # Check for filler phrases
