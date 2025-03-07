@@ -580,7 +580,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
             self._deferred_validation.on_human_end_of_speech(ev)
 
         def _on_interim_transcript(ev: stt.SpeechEvent) -> None:
-            logger.debug(f"Interim transcript: {ev.alternatives[0].text}")
+            logger.debug(f"\033[90mInterim transcript: {ev.alternatives[0]}\033[0m")
             self._transcribed_interim_text = ev.alternatives[0].text
 
             text = self._transcribed_interim_text or self._transcribed_text
@@ -670,8 +670,10 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
             while self._speech_q:
                 speech = self._speech_q[0]
                 self._playing_speech = speech
+                logger.info(f"\033[31mPlaying speech: {speech}\033[0m")
                 await self._play_speech(speech)
                 self._speech_q.pop(0)  # Remove the element only after playing
+                logger.info(f"\033[31mSpeech played: {speech}\033[0m")
                 self._playing_speech = None
 
             self._speech_q_changed.clear()
@@ -1180,6 +1182,8 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
 
     def _interrupt_if_possible(self) -> None:
         """Check whether the current assistant speech should be interrupted"""
+        logger.debug(f"\033[31mInterrupting if possible: {self._playing_speech}\033[0m")
+        logger.debug(f"\033[31mplaying speech: {self._playing_speech()}\033[0m")
         if self._playing_speech and self._should_interrupt():
             self._playing_speech.interrupt()
 
