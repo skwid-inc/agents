@@ -6,9 +6,10 @@ from typing import Any, AsyncIterable, Awaitable, Callable, Union
 
 from livekit import rtc
 
-from .. import llm, tokenize, utils
+from .. import llm, tokenize
 from .. import transcription as agent_transcription
 from .. import tts as text_to_speech
+from .. import utils
 from .agent_playout import AgentPlayout, PlayoutHandle
 from .log import logger
 
@@ -271,18 +272,20 @@ class AgentOutput:
 
         try:
             async for seg in tts_source:
+                logger.info(f"Received segment: {seg}")
                 if tts_stream is None:
                     tts_stream = handle._tts.stream()
-                    read_tts_atask = asyncio.create_task(
-                        _read_generated_audio_task(tts_stream)
-                    )
+                    read_tts_atask = asyncio.create_task(_read_generated_audio_task(tts_stream))
                     read_transcript_atask = asyncio.create_task(
                         self._read_transcript_task(transcript_source, handle)
                     )
 
+                logger.info(f"Pushing text: {seg}")
+
                 tts_stream.push_text(seg)
 
             if tts_stream is not None:
+                logger.info(f"Ending input in tts stream")
                 tts_stream.end_input()
                 assert read_transcript_atask and read_tts_atask
                 await read_tts_atask

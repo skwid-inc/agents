@@ -418,7 +418,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                         if word_stream is not None:
                             word_stream.end_input()
                         word_stream = None
-                        break
+
                     # Check for filler phrases
                     filler_phrase_wav = get_wav_if_available(input)
                     if filler_phrase_wav:
@@ -438,6 +438,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                     if word_stream is not None:
                         word_stream.end_input()
                     word_stream = None
+            logger.info(f"Closing segments ch")
             self._segments_ch.close()
 
         @utils.log_exceptions(logger=logger)
