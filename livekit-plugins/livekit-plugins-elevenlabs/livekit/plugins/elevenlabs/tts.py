@@ -435,6 +435,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                     if word_stream is None:
                         word_stream = self._opts.word_tokenizer.stream()
                         self._segments_ch.send_nowait(word_stream)
+                    logger.info(f"Pushing text to word stream: ####SAIKRISHNA####")
                     word_stream.push_text("SAIKRISHNA")
                 elif isinstance(input, self._FlushSentinel):
                     logger.info(f"Received flush sentinel")
