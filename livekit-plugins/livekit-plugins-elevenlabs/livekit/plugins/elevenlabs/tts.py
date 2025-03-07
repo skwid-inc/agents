@@ -571,6 +571,7 @@ class SynthesizeStream(tts.SynthesizeStream):
 
                 while True:
                     msg = await ws_conn.receive()
+                    logger.info(f"Received message from 11labs: {msg}")
                     if msg.type in (
                         aiohttp.WSMsgType.CLOSED,
                         aiohttp.WSMsgType.CLOSE,
