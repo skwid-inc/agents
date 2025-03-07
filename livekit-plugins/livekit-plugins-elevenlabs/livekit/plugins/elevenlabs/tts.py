@@ -527,8 +527,6 @@ class SynthesizeStream(tts.SynthesizeStream):
 
                         logger.info("Sending flush due to sentence-ending punctuation")
                         await ws_conn.send_str(json.dumps({"flush": True}))
-                    if AppConfig().call_metadata.get("should_end_decoder", False) is True:
-                        break
                 if xml_content:
                     logger.warning("11labs stream ended with incomplete xml content")
                 logger.info("Sending flush due to end of input")
