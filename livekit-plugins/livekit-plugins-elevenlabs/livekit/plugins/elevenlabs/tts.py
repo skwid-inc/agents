@@ -425,20 +425,20 @@ class SynthesizeStream(tts.SynthesizeStream):
                         )
                         continue
                     if word_stream is None:
-
                         # new segment (after flush for e.g)
                         word_stream = self._opts.word_tokenizer.stream()
                         self._segments_ch.send_nowait(word_stream)
                     logger.info(f"Pushing text to word stream: ####{input}####")
                     word_stream.push_text(input)
-                elif isinstance(input, self._ToolEndSentinel):
+                elif hasattr(input, "__class__") and "ToolEndSentinel" in input.__class__.__name__:
                     logger.info(f"Received tool end sentinel")
+                    if word_stream is None:
+                        word_stream = self._opts.word_tokenizer.stream()
+                        self._segments_ch.send_nowait(word_stream)
                     word_stream.push_text("SAIKRISHNA")
-
                 elif isinstance(input, self._FlushSentinel):
                     logger.info(f"Received flush sentinel")
                     if word_stream is not None:
-
                         word_stream.end_input()
                     word_stream = None
 
