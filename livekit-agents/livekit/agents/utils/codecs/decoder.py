@@ -53,12 +53,16 @@ class StreamBuffer:
 
     def read(self, size: int = -1) -> bytes:
         """Read data from the buffer in a reader thread."""
+        logger.info("IN read")
 
         if self._buffer.closed:
+            logger.info("returning b'' because of the closed buffer")
             return b""
 
         with self._data_available:
+            logger.info("IN with self._data_available")
             while True:
+                logger.info("IN while True")
                 self._buffer.seek(0)  # Rewind for reading
                 data = self._buffer.read(size)
 
@@ -67,10 +71,12 @@ class StreamBuffer:
                     # Shrink the buffer to remove already-read data
                     remaining = self._buffer.read()
                     self._buffer = io.BytesIO(remaining)
+                    logger.info("returning data")
                     return data
 
                 # If EOF is signaled and no data remains, return EOF
                 if self._eof:
+                    logger.info("IN if self._eof")
                     return b""
 
                 # Wait for more data
@@ -78,6 +84,7 @@ class StreamBuffer:
 
     def end_input(self):
         """Signal that no more data will be written."""
+        logger.info("IN end_input")
         with self._data_available:
             self._eof = True
             self._data_available.notify_all()
