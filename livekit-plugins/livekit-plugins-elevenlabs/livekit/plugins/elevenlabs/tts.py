@@ -413,6 +413,12 @@ class SynthesizeStream(tts.SynthesizeStream):
             word_stream = None
             async for input in self._input_ch:
                 if isinstance(input, str):
+                    if "SAIKRISHNA" in input:
+                        logger.info(f"Starting tool call")
+                        if word_stream is not None:
+                            word_stream.end_input()
+                        word_stream = None
+                        break
                     # Check for filler phrases
                     filler_phrase_wav = get_wav_if_available(input)
                     if filler_phrase_wav:
@@ -422,6 +428,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                         )
                         continue
                     if word_stream is None:
+
                         # new segment (after flush for e.g)
                         word_stream = self._opts.word_tokenizer.stream()
                         self._segments_ch.send_nowait(word_stream)
