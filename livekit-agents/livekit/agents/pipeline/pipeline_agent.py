@@ -594,7 +594,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
                 self._interrupt_if_possible()
 
         def _on_final_transcript(ev: stt.SpeechEvent) -> None:
-            logger.debug(f"Final transcript: {ev.alternatives[0].text}")
+            logger.debug(f"\033[90mFinal transcript: {ev.alternatives[0]}\033[0m")
             new_transcript = ev.alternatives[0].text
             if not new_transcript:
                 return
@@ -620,7 +620,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
             if len(words) >= 3:
                 # VAD can sometimes not detect that the human is speaking
                 # to make the interruption more reliable, we also interrupt on the final transcript.
-                logger.debug(f"Got more than 3 words so trying to interrupt")
+                logger.debug(f"\033[33mGot more than 3 words so trying to interrupt\033[0m")
                 self._interrupt_if_possible()
 
         self._human_input.on("start_of_speech", _on_start_of_speech)
