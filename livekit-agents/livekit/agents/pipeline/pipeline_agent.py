@@ -587,10 +587,15 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
             text = self._transcribed_interim_text or self._transcribed_text
             logger.debug(f"Interim transcript text: {text}")
             interim_words = self._opts.transcription.word_tokenizer.tokenize(text=text)
-            logger.debug(f"Interim words: {interim_words}")
 
             if self._last_final_transcript_event is not None:
                 last_event_data = self._last_final_transcript_event.alternatives[0]
+                logger.debug(f"Last final transcript event: {last_event_data.text}")
+                logger.debug(
+                    f"Last final transcript event start time: {last_event_data.start_time}"
+                )
+                logger.debug(f"Interim words: {interim_words}")
+                logger.debug(f"Interim words start time: {ev.alternatives[0].start_time}")
                 if ev.alternatives[0].start_time == last_event_data.start_time:
                     interim_words_for_last_event = self._opts.transcription.word_tokenizer.tokenize(
                         text=last_event_data.text
