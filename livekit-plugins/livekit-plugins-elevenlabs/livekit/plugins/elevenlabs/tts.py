@@ -417,7 +417,15 @@ class SynthesizeStream(tts.SynthesizeStream):
                 logger.info(f"input is an instance of str: {hasattr(input, '__class__')}")
                 logger.info(f"class name - {input.__class__.__name__}")
 
-                if isinstance(input, str):
+                if hasattr(input, "__class__") and "ToolEndSentinel" in input.__class__.__name__:
+                    logger.info(f"Received tool end sentinel")
+                    if word_stream is None:
+                        word_stream = self._opts.word_tokenizer.stream()
+                        self._segments_ch.send_nowait(word_stream)
+                    logger.info(f"Pushing text to word stream: ####SAIKRISHNA####")
+                    word_stream.push_text("SAIKRISHNA")
+
+                elif isinstance(input, str):
                     # Check for filler phrases
                     filler_phrase_wav = get_wav_if_available(input)
                     if filler_phrase_wav:
@@ -432,13 +440,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                         self._segments_ch.send_nowait(word_stream)
                     logger.info(f"Pushing text to word stream: ####{input}####")
                     word_stream.push_text(input)
-                elif hasattr(input, "__class__") and "ToolEndSentinel" in input.__class__.__name__:
-                    logger.info(f"Received tool end sentinel")
-                    if word_stream is None:
-                        word_stream = self._opts.word_tokenizer.stream()
-                        self._segments_ch.send_nowait(word_stream)
-                    logger.info(f"Pushing text to word stream: ####SAIKRISHNA####")
-                    word_stream.push_text("SAIKRISHNA")
+
                 elif isinstance(input, self._FlushSentinel):
                     logger.info(f"Received flush sentinel")
                     if word_stream is not None:
