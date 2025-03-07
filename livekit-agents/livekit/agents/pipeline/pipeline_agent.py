@@ -1183,7 +1183,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
     def _interrupt_if_possible(self) -> None:
         """Check whether the current assistant speech should be interrupted"""
         logger.debug(f"\033[31mInterrupting if possible: {self._playing_speech}\033[0m")
-        logger.debug(f"\033[31mplaying speech: {self._playing_speech()}\033[0m")
+        logger.debug(f"\033[31mplaying speech: {self._playing_speech}\033[0m")
         if self._playing_speech and self._should_interrupt():
             self._playing_speech.interrupt()
 
