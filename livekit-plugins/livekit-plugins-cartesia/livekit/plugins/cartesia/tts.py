@@ -18,13 +18,11 @@ import asyncio
 import base64
 import json
 import os
-import time
 import weakref
 from dataclasses import dataclass
 from typing import Any, Optional
 
 import aiohttp
-from app_config import AppConfig
 from livekit.agents import (
     APIConnectionError,
     APIConnectOptions,
@@ -129,6 +127,8 @@ class TTS(tts.TTS):
         self._pool = utils.ConnectionPool[aiohttp.ClientWebSocketResponse](
             connect_cb=self._connect_ws,
             close_cb=self._close_ws,
+            max_session_duration=300,
+            mark_refreshed_on_get=True,
         )
         self._streams = weakref.WeakSet[SynthesizeStream]()
 
@@ -137,9 +137,7 @@ class TTS(tts.TTS):
         url = self._opts.get_ws_url(
             f"/tts/websocket?api_key={self._opts.api_key}&cartesia_version={API_VERSION}"
         )
-        return await asyncio.wait_for(
-            session.ws_connect(url), self._conn_options.timeout
-        )
+        return await asyncio.wait_for(session.ws_connect(url), self._conn_options.timeout)
 
     async def _close_ws(self, ws: aiohttp.ClientWebSocketResponse):
         await ws.close()
@@ -149,6 +147,9 @@ class TTS(tts.TTS):
             self._session = utils.http_context.http_session()
 
         return self._session
+
+    def prewarm(self) -> None:
+        self._pool.prewarm()
 
     def update_options(
         self,
@@ -193,9 +194,7 @@ class TTS(tts.TTS):
             session=self._ensure_session(),
         )
 
-    def stream(
-        self, *, conn_options: Optional[APIConnectOptions] = None
-    ) -> "SynthesizeStream":
+    def stream(self, *, conn_options: Optional[APIConnectOptions] = None) -> "SynthesizeStream":
         stream = SynthesizeStream(
             tts=self,
             pool=self._pool,
@@ -291,14 +290,6 @@ class SynthesizeStream(tts.SynthesizeStream):
         ).stream()
 
     async def _run(self) -> None:
-        if (
-            not AppConfig()
-            .get_call_metadata()
-            .get("first_sentence_synthesis_start_time")
-        ):
-            AppConfig().get_call_metadata().update(
-                {"first_sentence_synthesis_start_time": time.time()}
-            )
         request_id = utils.shortuuid()
 
         async def _sentence_stream_task(ws: aiohttp.ClientWebSocketResponse):
@@ -309,12 +300,25 @@ class SynthesizeStream(tts.SynthesizeStream):
                 token_pkt["transcript"] = ev.token + " "
                 token_pkt["continue"] = True
                 self._mark_started()
+                logger.info(
+                    f"Cartesia TTS Token packet: `{token_pkt['transcript']}`, context ID: {request_id}"
+                )
                 await ws.send_str(json.dumps(token_pkt))
+                # if any(ev.token.strip().endswith(p) for p in [".", "!", "?"]):
+                #     end_pkt = base_pkt.copy()
+                #     end_pkt["context_id"] = request_id
+                #     end_pkt["transcript"] = " "
+                #     end_pkt["continue"] = False
+                #     logger.info(f"Cartesia TTS End packet v1: `{end_pkt['transcript']}`, context ID: {request_id}")
+                #     await ws.send_str(json.dumps(end_pkt))
 
             end_pkt = base_pkt.copy()
             end_pkt["context_id"] = request_id
             end_pkt["transcript"] = " "
             end_pkt["continue"] = False
+            logger.info(
+                f"Cartesia TTS End packet v2: `{end_pkt['transcript']}`, context ID: {request_id}"
+            )
             await ws.send_str(json.dumps(end_pkt))
 
         async def _input_task():
@@ -359,6 +363,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                     b64data = base64.b64decode(data["data"])
                     for frame in audio_bstream.write(b64data):
                         emitter.push(frame)
+                    emitter.flush()
                 elif data.get("done"):
                     for frame in audio_bstream.flush():
                         emitter.push(frame)
