@@ -472,6 +472,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                         num_channels=1,
                     )
                     msg = await ws_conn.receive()
+                    logger.info(f"Received message from 11LABS")
                     if msg.type in (
                         aiohttp.WSMsgType.CLOSED,
                         aiohttp.WSMsgType.CLOSE,
@@ -488,6 +489,9 @@ class SynthesizeStream(tts.SynthesizeStream):
 
                     data = json.loads(msg.data)
                     if data.get("audio"):
+                        if alignment := data.get("normalizedAlignment"):
+                            received_text = "".join(alignment.get("chars", [])).replace(" ", "")
+                            logger.info(f"Received text: {received_text}")
                         b64data = base64.b64decode(data["audio"])
                         msg_decoder.push(b64data)
 
