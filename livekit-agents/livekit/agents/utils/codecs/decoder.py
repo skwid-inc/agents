@@ -121,7 +121,7 @@ class AudioStreamDecoder:
         if self.__class__._executor is None:
             # each decoder instance will submit jobs to the shared pool
             self.__class__._executor = ThreadPoolExecutor(max_workers=self.__class__._max_workers)
-        self._av_container = av.open(self._input_buf)
+        # self._av_container = av.open(self._input_buf)
 
     def push(self, chunk: bytes):
         self._input_buf.write(chunk)
@@ -132,16 +132,17 @@ class AudioStreamDecoder:
     def end_input(self):
         self._input_buf.end_input()
 
-    def flush(self):
-        logger.info(f"FLUSHING BUFFERS")
-        self._input_buf.notify_all()
-        logger.info(f"AV CONTAINER: {self._av_container.flush_buffers}")
-        # logger.info(f"AV CONTAINER: {self._av_container.}")
-        # self._av_container.flush_buffers()
+    # def flush(self):
+    #     logger.info(f"FLUSHING BUFFERS")
+    #     self._input_buf.notify_all()
+    #     logger.info(f"AV CONTAINER: {self._av_container.flush_buffers}")
+    # logger.info(f"AV CONTAINER: {self._av_container.}")
+    # self._av_container.flush_buffers()
 
     def _decode_loop(self):
         try:
-            audio_stream = next(s for s in self._av_container.streams if s.type == "audio")
+            container = av.open(self._input_buf)
+            audio_stream = next(s for s in container.streams if s.type == "audio")
             resampler = av.AudioResampler(
                 # convert to signed 16-bit little endian
                 format="s16",
@@ -151,7 +152,7 @@ class AudioStreamDecoder:
             # TODO: handle error where audio stream isn't found
             if not audio_stream:
                 return
-            for frame in self._av_container.decode(audio_stream):
+            for frame in container.decode(audio_stream):
                 logger.info(f"DECODED FRAME")
                 if self._closed:
                     return
