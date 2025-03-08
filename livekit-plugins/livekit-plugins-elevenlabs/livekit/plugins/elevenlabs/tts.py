@@ -239,9 +239,7 @@ class TTS(tts.TTS):
             session=self._ensure_session(),
         )
 
-    def stream(
-        self, *, conn_options: Optional[APIConnectOptions] = None
-    ) -> "SynthesizeStream":
+    def stream(self, *, conn_options: Optional[APIConnectOptions] = None) -> "SynthesizeStream":
         stream = SynthesizeStream(tts=self, pool=self._pool, opts=self._opts)
         self._streams.add(stream)
         return stream
@@ -409,14 +407,12 @@ class SynthesizeStream(tts.SynthesizeStream):
             # 11labs protocol expects the first message to be an "init msg"
             init_pkt = dict(
                 text=" ",
-                voice_settings=_strip_nones(
-                    dataclasses.asdict(self._opts.voice.settings)
-                )
-                if self._opts.voice.settings
-                else None,
-                generation_config=dict(
-                    chunk_length_schedule=self._opts.chunk_length_schedule
+                voice_settings=(
+                    _strip_nones(dataclasses.asdict(self._opts.voice.settings))
+                    if self._opts.voice.settings
+                    else None
                 ),
+                generation_config=dict(chunk_length_schedule=self._opts.chunk_length_schedule),
             )
             await ws_conn.send_str(json.dumps(init_pkt))
 
@@ -456,6 +452,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                     segment_id=segment_id,
                 )
                 async for frame in decoder:
+                    logger.info(f"PUSHING DATA TO EMITTER")
                     emitter.push(frame)
                 emitter.flush()
 
@@ -466,6 +463,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                 received_text = ""
 
                 while True:
+                    logger.info(f"RECEIVING MESSAGE FROM 11LABS")
                     msg = await ws_conn.receive()
                     if msg.type in (
                         aiohttp.WSMsgType.CLOSED,
@@ -484,13 +482,13 @@ class SynthesizeStream(tts.SynthesizeStream):
                     data = json.loads(msg.data)
                     if data.get("audio"):
                         b64data = base64.b64decode(data["audio"])
+                        logger.info(f"PUSHING DATA TO DECODER")
                         decoder.push(b64data)
 
                         if alignment := data.get("normalizedAlignment"):
-                            received_text += "".join(
-                                alignment.get("chars", [])
-                            ).replace(" ", "")
-                            if received_text == expected_text:
+                            received_text += "".join(alignment.get("chars", [])).replace(" ", "")
+                            expected_text_without_spaces = expected_text.replace(" ", "")
+                            if received_text == expected_text_without_spaces:
                                 decoder.end_input()
                                 break
                     elif data.get("error"):
