@@ -511,10 +511,10 @@ class SynthesizeStream(tts.SynthesizeStream):
                             received_text += "".join(alignment.get("chars", [])).replace(" ", "")
                             logger.info(f"received_text: {received_text}")
                             logger.info(f"expected_text: {expected_text}")
-                            if received_text == expected_text:
-                                decoder.end_input()
-                                emitter.flush()
-                                break
+                            # if received_text == expected_text:
+                            #     decoder.end_input()
+                            #     emitter.flush()
+                            #     break
                     elif data.get("error"):
                         raise APIStatusError(
                             message=data["error"],
