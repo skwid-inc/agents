@@ -19,15 +19,11 @@ import base64
 import dataclasses
 import json
 import os
-import time
 import weakref
 from dataclasses import dataclass
 from typing import Any, List, Optional
 
 import aiohttp
-import numpy as np
-import soundfile as sf
-from livekit import rtc
 from livekit.agents import (
     APIConnectionError,
     APIConnectOptions,
@@ -37,10 +33,6 @@ from livekit.agents import (
     tts,
     utils,
 )
-from scipy import signal
-
-from app_config import AppConfig
-from filler_phrases import get_wav_if_available
 
 from .log import logger
 from .models import TTSEncoding, TTSModels
@@ -86,7 +78,6 @@ DEFAULT_VOICE = Voice(
 API_BASE_URL_V1 = "https://api.elevenlabs.io/v1"
 AUTHORIZATION_HEADER = "xi-api-key"
 WS_INACTIVITY_TIMEOUT = 300
-NUM_CHANNELS = 1
 
 
 @dataclass
@@ -113,7 +104,7 @@ class TTS(tts.TTS):
         model: TTSModels | str = "eleven_flash_v2_5",
         api_key: str | None = None,
         base_url: str | None = None,
-        streaming_latency: int = 3,
+        streaming_latency: int = 0,
         inactivity_timeout: int = WS_INACTIVITY_TIMEOUT,
         word_tokenizer: Optional[tokenize.WordTokenizer] = None,
         enable_ssml_parsing: bool = False,
@@ -131,7 +122,7 @@ class TTS(tts.TTS):
             model (TTSModels | str): TTS model to use. Defaults to "eleven_turbo_v2_5".
             api_key (str | None): ElevenLabs API key. Can be set via argument or `ELEVEN_API_KEY` environment variable.
             base_url (str | None): Custom base URL for the API. Optional.
-            streaming_latency (int): Latency in seconds for streaming. Defaults to 3.
+            streaming_latency (int): Optimize for streaming latency, defaults to 0 - disabled. 4 for max latency optimizations. deprecated
             inactivity_timeout (int): Inactivity timeout in seconds for the websocket connection. Defaults to 300.
             word_tokenizer (tokenize.WordTokenizer): Tokenizer for processing text. Defaults to basic WordTokenizer.
             enable_ssml_parsing (bool): Enable SSML parsing for input text. Defaults to False.
@@ -207,6 +198,9 @@ class TTS(tts.TTS):
 
         return self._session
 
+    def prewarm(self) -> None:
+        self._pool.prewarm()
+
     async def list_voices(self) -> List[Voice]:
         async with self._ensure_session().get(
             f"{self._opts.base_url}/voices",
@@ -244,60 +238,6 @@ class TTS(tts.TTS):
             opts=self._opts,
             session=self._ensure_session(),
         )
-
-    async def _play_presynthesized_audio(self, wav_path: str, event_ch, input_text: str) -> None:
-        logger.info(f"Playing Presynthesized Audio: {input_text}")
-        request_id = utils.shortuuid()
-
-        # Read the WAV file
-        wav_path = get_wav_if_available(input_text)
-        audio_array, file_sample_rate = sf.read(str(wav_path), dtype="int16")
-
-        logger.info(f"File sample rate: {file_sample_rate}")
-        logger.info(f"WAV file channels: {1 if audio_array.ndim == 1 else audio_array.shape[1]}")
-        logger.info(f"Target sample rate: {self._opts.sample_rate}")
-
-        # Convert stereo to mono if needed
-        if audio_array.ndim == 2 and audio_array.shape[1] == 2:
-            logger.info("Converting stereo to mono")
-            audio_array = audio_array.mean(axis=1)
-
-        # Resample if needed
-        if file_sample_rate != self._opts.sample_rate:
-            logger.info(f"Resampling from {file_sample_rate} to {self._opts.sample_rate}")
-            # Calculate number of samples for the target sample rate
-            num_samples = int(len(audio_array) * self._opts.sample_rate / file_sample_rate)
-            audio_array = signal.resample(audio_array, num_samples)
-
-        # Process audio in chunks
-        samples_per_channel = 960  # Standard frame size for audio processing
-        for i in range(0, len(audio_array), samples_per_channel):
-            chunk = audio_array[i : i + samples_per_channel]
-
-            # Pad the last chunk if needed
-            if len(chunk) < samples_per_channel:
-                chunk = np.pad(chunk, (0, samples_per_channel - len(chunk)))
-
-            # Apply soft clipping and ensure int16 format
-            chunk = np.tanh(chunk / 32768.0) * 32768.0
-            chunk = np.round(chunk).astype(np.int16)
-
-            # Create and send the audio frame with matching parameters
-            frame = rtc.AudioFrame(
-                data=chunk.tobytes(),
-                sample_rate=self._opts.sample_rate,  # Use the TTS instance's sample rate
-                samples_per_channel=samples_per_channel,
-                num_channels=NUM_CHANNELS,  # Make sure this matches the expected number of channels
-            )
-            event_ch.send_nowait(
-                tts.SynthesizedAudio(
-                    request_id=request_id,
-                    frame=frame,
-                )
-            )
-
-        logger.info(f"Sent Presynthesized Audio to event channel")
-        return
 
     def stream(self, *, conn_options: Optional[APIConnectOptions] = None) -> "SynthesizeStream":
         stream = SynthesizeStream(tts=self, pool=self._pool, opts=self._opts)
@@ -340,7 +280,6 @@ class ChunkedStream(tts.ChunkedStream):
             "voice_settings": voice_settings,
         }
 
-        logger.info("Initializing decoder")
         decoder = utils.codecs.AudioStreamDecoder(
             sample_rate=self._opts.sample_rate,
             num_channels=1,
@@ -412,42 +351,18 @@ class SynthesizeStream(tts.SynthesizeStream):
             """tokenize text from the input_ch to words"""
             word_stream = None
             async for input in self._input_ch:
-                logger.info(f"received input with type: {type(input)}")
-                logger.info(f"Received input: {input}")
-                logger.info(f"input is an instance of str: {hasattr(input, '__class__')}")
-                logger.info(f"class name - {input.__class__.__name__}")
-
-                if hasattr(input, "__class__") and "ToolEndSentinel" in input.__class__.__name__:
-                    logger.info(f"Received tool end sentinel")
-                    if word_stream is None:
-                        word_stream = self._opts.word_tokenizer.stream()
-                        self._segments_ch.send_nowait(word_stream)
-                    logger.info(f"Pushing text to word stream: ####SAIKRISHNA####")
-                    word_stream.push_text("SAIKRISHNA")
-
-                elif isinstance(input, str):
-                    # Check for filler phrases
-                    filler_phrase_wav = get_wav_if_available(input)
-                    if filler_phrase_wav:
-                        logger.info(f"Playing presynthesized audio for: {input}")
-                        await self._tts._play_presynthesized_audio(
-                            filler_phrase_wav, self._event_ch, input
-                        )
-                        continue
+                if isinstance(input, str):
                     if word_stream is None:
                         # new segment (after flush for e.g)
                         word_stream = self._opts.word_tokenizer.stream()
                         self._segments_ch.send_nowait(word_stream)
-                    logger.info(f"Pushing text to word stream: ####{input}####")
                     word_stream.push_text(input)
-
                 elif isinstance(input, self._FlushSentinel):
-                    logger.info(f"Received flush sentinel")
                     if word_stream is not None:
                         word_stream.end_input()
                     word_stream = None
-
-            logger.info(f"Closing segments ch")
+            if word_stream is not None:
+                word_stream.end_input()
             self._segments_ch.close()
 
         @utils.log_exceptions(logger=logger)
@@ -484,10 +399,14 @@ class SynthesizeStream(tts.SynthesizeStream):
             segment_id = utils.shortuuid()
             expected_text = ""  # accumulate all tokens sent
 
-            logger.info("Initializing decoder")
             decoder = utils.codecs.AudioStreamDecoder(
                 sample_rate=self._opts.sample_rate,
                 num_channels=1,
+            )
+            emitter = tts.SynthesizedAudioEmitter(
+                event_ch=self._event_ch,
+                request_id=request_id,
+                segment_id=segment_id,
             )
 
             # 11labs protocol expects the first message to be an "init msg"
@@ -509,7 +428,6 @@ class SynthesizeStream(tts.SynthesizeStream):
                 async for data in word_stream:
                     text = data.token
                     expected_text += text
-                    logger.info(f"expected_text: ####{expected_text}####")
                     # send the xml phoneme in one go
                     if (
                         self._opts.enable_ssml_parsing
@@ -523,51 +441,34 @@ class SynthesizeStream(tts.SynthesizeStream):
                         else:
                             continue
 
-                    # text = text.replace("system.", "system, please hold.")
-                    data_pkt = dict(text=f"{text.strip()} ")  # must always end with a space
-
+                    data_pkt = dict(text=f"{text} ")  # must always end with a space
                     self._mark_started()
-                    logger.info(f"data_pkt: {data_pkt}")
                     await ws_conn.send_str(json.dumps(data_pkt))
-                    if (
-                        any(text.strip().endswith(p) for p in [".", "?", "!"])
-                        # and "system" not in text.lower()
-                    ):
-                        if not AppConfig().call_metadata.get("first_sentence_synthesis_start_time"):
-                            AppConfig().call_metadata[
-                                "first_sentence_synthesis_start_time"
-                            ] = time.time()
-
-                        # logger.info(
-                        #     "Sending flush due to sentence-ending punctuation only if it is open"
-                        # )
-                        # if not ws_conn.closed:
-                        #     await ws_conn.send_str(json.dumps({"flush": True}))
+                    if any(char in text.strip() for char in [".", "!", "?"]):
+                        await ws_conn.send_str(json.dumps({"flush": True}))
                 if xml_content:
                     logger.warning("11labs stream ended with incomplete xml content")
-                logger.info("Sending flush due to end of input")
                 await ws_conn.send_str(json.dumps({"flush": True}))
 
             # consumes from decoder and generates events
             @utils.log_exceptions(logger=logger)
             async def generate_task():
-                emitter = tts.SynthesizedAudioEmitter(
-                    event_ch=self._event_ch,
-                    request_id=request_id,
-                    segment_id=segment_id,
-                )
+                # emitter = tts.SynthesizedAudioEmitter(
+                #     event_ch=self._event_ch,
+                #     request_id=request_id,
+                #     segment_id=segment_id,
+                # )
                 async for frame in decoder:
-                    logger.info(f"Pushing frame to emitter - {frame}")
+                    logger.info("generate_task: pushing frame to emitter")
                     emitter.push(frame)
-                logger.info("Flushing emitter")
                 emitter.flush()
 
             # receives from ws and decodes audio
             @utils.log_exceptions(logger=logger)
             async def recv_task():
                 nonlocal expected_text
+
                 received_text = ""
-                logger.info(f"expected_text before the while TRUE : {expected_text}")
 
                 while True:
                     msg = await ws_conn.receive()
@@ -588,49 +489,29 @@ class SynthesizeStream(tts.SynthesizeStream):
                     data = json.loads(msg.data)
                     if data.get("audio"):
                         b64data = base64.b64decode(data["audio"])
-                        decoder.push(b64data)
+                        logger.info("recv_task: pushing b64data to decoder")
+
+                        # Create a new decoder for this chunk
+                        chunk_decoder = utils.codecs.AudioStreamDecoder(
+                            sample_rate=self._opts.sample_rate,
+                            num_channels=1,
+                        )
+
+                        chunk_decoder.push(b64data)
+                        chunk_decoder.end_input()
+
+                        async for frame in chunk_decoder:
+                            logger.info("recv_task: pushing frame to emitter")
+                            emitter.push(frame)
+
+                        await chunk_decoder.aclose()
+                        emitter.flush()
 
                         if alignment := data.get("normalizedAlignment"):
                             received_text += "".join(alignment.get("chars", [])).replace(" ", "")
-                            expected_text_without_spaces = expected_text.replace(" ", "")
-                            # expected_text_without_spaces = (
-                            #     expected_text_without_spaces.replace(
-                            #         "system.", "system,pleasehold."
-                            #     )
-                            # )
-                            logger.info(f"\033[36mreceived_text: {received_text}\033[0m")
-                            logger.info(
-                                f"\033[36mexpected_text_without_spaces: {expected_text_without_spaces}\033[0m"
-                            )
-
-                            if any(received_text.strip().endswith(p) for p in [".", "?", "!"]):
-                                logger.info("\033[36mRECEIVED AN ENTIRE SENTENCE\033[0m")
-                                # expected_text = ""
-                                # received_text = ""
-                                # decoder.force_notify()
-
-                            if received_text == expected_text_without_spaces:
-                                logger.info("\033[36mENDING INPUT FOR DECODER\033[0m")
+                            if received_text == expected_text:
                                 decoder.end_input()
                                 break
-
-                            # if any(received_text.strip().endswith(p) for p in [".", "?", "!"]):
-                            #     logger.info(
-                            #         f"ABOUT TO END INPUT BECAUSE OF SENTENCE ENDING PUNCTUATION - {received_text}"
-                            #     )
-
-                            # if (
-                            #     AppConfig().get_call_metadata().get("should_end_decoder")
-                            # ) and received_text == expected_text_without_spaces:
-                            #     AppConfig().get_call_metadata()["should_end_decoder"] = False
-                            #     logger.info(
-                            #         f"ABOUT TO BREAK OUT OF THE WHILE TRUE - {received_text}"
-                            #     )
-                            #     decoder.end_input()
-                            #     break
-                            # if received_text == expected_text_without_spaces:
-                            #     decoder.end_input()
-                            #     break
                     elif data.get("error"):
                         raise APIStatusError(
                             message=data["error"],
@@ -649,7 +530,7 @@ class SynthesizeStream(tts.SynthesizeStream):
             tasks = [
                 asyncio.create_task(send_task()),
                 asyncio.create_task(recv_task()),
-                asyncio.create_task(generate_task()),
+                # asyncio.create_task(generate_task()),
             ]
             try:
                 await asyncio.gather(*tasks)
@@ -694,11 +575,13 @@ def _synthesize_url(opts: _TTSOptions) -> str:
     voice_id = opts.voice.id
     model_id = opts.model
     output_format = opts.encoding
-    latency = opts.streaming_latency
-    return (
+    url = (
         f"{base_url}/text-to-speech/{voice_id}/stream?"
-        f"model_id={model_id}&output_format={output_format}&optimize_streaming_latency={latency}"
+        f"model_id={model_id}&output_format={output_format}"
     )
+    if opts.streaming_latency:
+        url += f"&optimize_streaming_latency={opts.streaming_latency}"
+    return url
 
 
 def _stream_url(opts: _TTSOptions) -> str:
@@ -706,15 +589,16 @@ def _stream_url(opts: _TTSOptions) -> str:
     voice_id = opts.voice.id
     model_id = opts.model
     output_format = opts.encoding
-    latency = opts.streaming_latency
     enable_ssml = str(opts.enable_ssml_parsing).lower()
     language = opts.language
     inactivity_timeout = opts.inactivity_timeout
     url = (
         f"{base_url}/text-to-speech/{voice_id}/stream-input?"
-        f"model_id={model_id}&output_format={output_format}&optimize_streaming_latency={latency}&"
+        f"model_id={model_id}&output_format={output_format}&"
         f"enable_ssml_parsing={enable_ssml}&inactivity_timeout={inactivity_timeout}"
     )
     if language is not None:
         url += f"&language_code={language}"
+    if opts.streaming_latency:
+        url += f"&optimize_streaming_latency={opts.streaming_latency}"
     return url
