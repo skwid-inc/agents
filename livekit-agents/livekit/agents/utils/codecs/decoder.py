@@ -135,6 +135,8 @@ class AudioStreamDecoder:
     def flush(self):
         logger.info(f"FLUSHING BUFFERS")
         self._input_buf.notify_all()
+        logger.info(f"AV CONTAINER: {self._av_container.flush_buffers}")
+        # logger.info(f"AV CONTAINER: {self._av_container.}")
         # self._av_container.flush_buffers()
 
     def _decode_loop(self):
