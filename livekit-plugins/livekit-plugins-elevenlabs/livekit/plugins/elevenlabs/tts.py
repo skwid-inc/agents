@@ -570,9 +570,15 @@ class SynthesizeStream(tts.SynthesizeStream):
                 received_text = ""
                 logger.info(f"expected_text before the while TRUE : {expected_text}")
 
+                emitter = tts.SynthesizedAudioEmitter(
+                    event_ch=self._event_ch,
+                    request_id=request_id,
+                    segment_id=segment_id,
+                )
+
                 while True:
                     msg = await ws_conn.receive()
-                    # logger.info(f"Received message from 11labs: {msg}")
+                    logger.info(f"Received message from 11labs")
                     if msg.type in (
                         aiohttp.WSMsgType.CLOSED,
                         aiohttp.WSMsgType.CLOSE,
@@ -652,7 +658,7 @@ class SynthesizeStream(tts.SynthesizeStream):
             tasks = [
                 asyncio.create_task(send_task()),
                 asyncio.create_task(recv_task()),
-                asyncio.create_task(generate_task()),
+                # asyncio.create_task(generate_task()),
             ]
             try:
                 await asyncio.gather(*tasks)

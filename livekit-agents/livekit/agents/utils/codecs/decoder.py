@@ -71,7 +71,8 @@ class StreamBuffer:
                     # Shrink the buffer to remove already-read data
                     remaining = self._buffer.read()
                     self._buffer = io.BytesIO(remaining)
-                    logger.info("returning data")
+                    logger.info(f"returning data of len {len(data)}")
+                    logger.info(f"remaining data of len {len(remaining)}")
                     return data
 
                 # If EOF is signaled and no data remains, return EOF
