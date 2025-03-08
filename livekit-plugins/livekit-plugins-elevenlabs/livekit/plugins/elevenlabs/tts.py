@@ -495,6 +495,9 @@ class SynthesizeStream(tts.SynthesizeStream):
                         if alignment := data.get("normalizedAlignment"):
                             received_text += "".join(alignment.get("chars", [])).replace(" ", "")
                             expected_text_without_spaces = expected_text.replace(" ", "")
+                            logger.info(
+                                f"EXPECTED TEXT WITHOUT SPACES: {expected_text_without_spaces}"
+                            )
                             if received_text == expected_text_without_spaces:
                                 decoder.end_input()
                                 break
