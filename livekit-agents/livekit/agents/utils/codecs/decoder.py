@@ -130,6 +130,9 @@ class AudioStreamDecoder:
     def _decode_loop(self):
         try:
             container = av.open(self._input_buf)
+            logger.info(f"CONTAINER: {container}")
+            logger.info(f"container packet queue: {container.packet_queue_size}")
+            container.packet_queue_size = 1
             audio_stream = next(s for s in container.streams if s.type == "audio")
             resampler = av.AudioResampler(
                 # convert to signed 16-bit little endian
