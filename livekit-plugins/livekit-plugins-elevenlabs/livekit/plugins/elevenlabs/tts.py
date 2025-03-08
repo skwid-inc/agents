@@ -509,6 +509,8 @@ class SynthesizeStream(tts.SynthesizeStream):
 
                         if alignment := data.get("normalizedAlignment"):
                             received_text += "".join(alignment.get("chars", [])).replace(" ", "")
+                            logger.info(f"received_text: {received_text}")
+                            logger.info(f"expected_text: {expected_text}")
                             if received_text == expected_text:
                                 decoder.end_input()
                                 break
