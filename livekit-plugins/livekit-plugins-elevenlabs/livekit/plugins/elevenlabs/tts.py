@@ -469,6 +469,15 @@ class SynthesizeStream(tts.SynthesizeStream):
                 nonlocal expected_text
                 received_text = ""
 
+                emitter = tts.SynthesizedAudioEmitter(
+                    event_ch=self._event_ch,
+                    request_id=request_id,
+                )
+                audio_bstream = utils.audio.AudioByteStream(
+                    sample_rate=self._opts.sample_rate,
+                    num_channels=1,
+                )
+
                 while True:
                     logger.info(f"RECEIVING MESSAGE FROM 11LABS")
                     msg = await ws_conn.receive()
@@ -489,8 +498,11 @@ class SynthesizeStream(tts.SynthesizeStream):
                     data = json.loads(msg.data)
                     if data.get("audio"):
                         b64data = base64.b64decode(data["audio"])
-                        logger.info(f"PUSHING DATA TO DECODER")
-                        decoder.push(b64data)
+                        logger.info(f"PUSHING DATA TO EMITTER")
+                        # decoder.push(b64data)
+                        for frame in audio_bstream.push(b64data):
+                            emitter.push(frame)
+                        emitter.flush()
 
                         if alignment := data.get("normalizedAlignment"):
                             received_text += "".join(alignment.get("chars", [])).replace(" ", "")
@@ -498,9 +510,9 @@ class SynthesizeStream(tts.SynthesizeStream):
                             logger.info(
                                 f"RECEIVED TEXT: {received_text}\nEXPECTED TEXT: {expected_text_without_spaces}"
                             )
-                            if received_text == expected_text_without_spaces:
-                                decoder.end_input()
-                                break
+                            # if received_text == expected_text_without_spaces:
+                            #     decoder.end_input()
+                            #     break
                             # else:
                             #     logger.info("FLUSHING DECODER===============")
                             #     decoder.flush()
@@ -527,7 +539,7 @@ class SynthesizeStream(tts.SynthesizeStream):
             tasks = [
                 asyncio.create_task(send_task()),
                 asyncio.create_task(recv_task()),
-                asyncio.create_task(generate_task()),
+                # asyncio.create_task(generate_task()),
             ]
             try:
                 await asyncio.gather(*tasks)
