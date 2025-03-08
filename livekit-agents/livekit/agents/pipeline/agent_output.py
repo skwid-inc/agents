@@ -256,14 +256,16 @@ class AgentOutput:
         ) -> None:
             try:
                 async for audio in tts_stream:
+                    logger.info("Received audio frame")
                     if not handle._tr_fwd.closed:
+                        logger.info("Pushing audio to forwarder")
                         handle._tr_fwd.push_audio(audio.frame)
 
                     handle._buf_ch.send_nowait(audio.frame)
             finally:
                 if handle._tr_fwd and not handle._tr_fwd.closed:
                     handle._tr_fwd.mark_audio_segment_end()
-
+                logger.info("Closing tts stream with aclose")
                 await tts_stream.aclose()
 
         tts_stream: text_to_speech.SynthesizeStream | None = None
