@@ -494,8 +494,11 @@ class SynthesizeStream(tts.SynthesizeStream):
                         msg_decoder.end_input()
 
                         async for frame in msg_decoder:
+                            logger.info("Pushing frame to emitter")
                             emitter.push(frame)
+                        logger.info("Flushing emitter")
                         emitter.flush()
+                        msg_decoder.aclose()
 
                         # if alignment := data.get("normalizedAlignment"):
                         #     received_text += "".join(alignment.get("chars", [])).replace(" ", "")
