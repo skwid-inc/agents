@@ -399,10 +399,10 @@ class SynthesizeStream(tts.SynthesizeStream):
             segment_id = utils.shortuuid()
             expected_text = ""  # accumulate all tokens sent
 
-            decoder = utils.codecs.AudioStreamDecoder(
-                sample_rate=self._opts.sample_rate,
-                num_channels=1,
-            )
+            # decoder = utils.codecs.AudioStreamDecoder(
+            #     sample_rate=self._opts.sample_rate,
+            #     num_channels=1,
+            # )
 
             # 11labs protocol expects the first message to be an "init msg"
             init_pkt = dict(
@@ -460,8 +460,17 @@ class SynthesizeStream(tts.SynthesizeStream):
             async def recv_task():
                 nonlocal expected_text
                 received_text = ""
+                emitter = tts.SynthesizedAudioEmitter(
+                    event_ch=self._event_ch,
+                    request_id=request_id,
+                    segment_id=segment_id,
+                )
 
                 while True:
+                    msg_decoder = utils.codecs.AudioStreamDecoder(
+                        sample_rate=self._opts.sample_rate,
+                        num_channels=1,
+                    )
                     msg = await ws_conn.receive()
                     if msg.type in (
                         aiohttp.WSMsgType.CLOSED,
@@ -480,13 +489,19 @@ class SynthesizeStream(tts.SynthesizeStream):
                     data = json.loads(msg.data)
                     if data.get("audio"):
                         b64data = base64.b64decode(data["audio"])
-                        decoder.push(b64data)
+                        msg_decoder.push(b64data)
 
-                        if alignment := data.get("normalizedAlignment"):
-                            received_text += "".join(alignment.get("chars", [])).replace(" ", "")
-                            if received_text == expected_text:
-                                decoder.end_input()
-                                break
+                        msg_decoder.end_input()
+
+                        async for frame in msg_decoder:
+                            emitter.push(frame)
+                        emitter.flush()
+
+                        # if alignment := data.get("normalizedAlignment"):
+                        #     received_text += "".join(alignment.get("chars", [])).replace(" ", "")
+                        #     if received_text == expected_text:
+                        #         decoder.end_input()
+                        #         break
                     elif data.get("error"):
                         raise APIStatusError(
                             message=data["error"],
@@ -505,7 +520,7 @@ class SynthesizeStream(tts.SynthesizeStream):
             tasks = [
                 asyncio.create_task(send_task()),
                 asyncio.create_task(recv_task()),
-                asyncio.create_task(generate_task()),
+                # asyncio.create_task(generate_task()),
             ]
             try:
                 await asyncio.gather(*tasks)
@@ -524,7 +539,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                 raise APIConnectionError() from e
             finally:
                 await utils.aio.gracefully_cancel(*tasks)
-                await decoder.aclose()
+                # await decoder.aclose()
 
 
 def _dict_to_voices_list(data: dict[str, Any]):
