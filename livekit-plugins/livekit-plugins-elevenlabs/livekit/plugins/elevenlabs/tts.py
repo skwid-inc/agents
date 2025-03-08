@@ -437,6 +437,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                             continue
 
                     data_pkt = dict(text=f"{text} ")  # must always end with a space
+                    logger.info(f"SENDING DATA PKT TO 11LABS '{data_pkt}'")
                     self._mark_started()
                     await ws_conn.send_str(json.dumps(data_pkt))
                 if xml_content:
