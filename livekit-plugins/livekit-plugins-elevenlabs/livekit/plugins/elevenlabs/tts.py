@@ -556,6 +556,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                     request_id=request_id,
                     segment_id=segment_id,
                 )
+                logger.info(f"ENTERED THE GENERATE TASK")
 
                 async for frame in decoder:
                     logger.info(f"Pushing frame to emitter - {frame}")
@@ -569,12 +570,6 @@ class SynthesizeStream(tts.SynthesizeStream):
                 nonlocal expected_text
                 received_text = ""
                 logger.info(f"expected_text before the while TRUE : {expected_text}")
-
-                emitter = tts.SynthesizedAudioEmitter(
-                    event_ch=self._event_ch,
-                    request_id=request_id,
-                    segment_id=segment_id,
-                )
 
                 while True:
                     msg = await ws_conn.receive()
@@ -658,7 +653,7 @@ class SynthesizeStream(tts.SynthesizeStream):
             tasks = [
                 asyncio.create_task(send_task()),
                 asyncio.create_task(recv_task()),
-                # asyncio.create_task(generate_task()),
+                asyncio.create_task(generate_task()),
             ]
             try:
                 await asyncio.gather(*tasks)
