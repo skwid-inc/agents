@@ -501,6 +501,13 @@ class SynthesizeStream(tts.SynthesizeStream):
                             if received_text == expected_text_without_spaces:
                                 decoder.end_input()
                                 break
+                            else:
+                                decoder.flush()
+
+                            # decoder = utils.codecs.AudioStreamDecoder(
+                            #     sample_rate=self._opts.sample_rate,
+                            #     num_channels=1,
+                            # )
                     elif data.get("error"):
                         raise APIStatusError(
                             message=data["error"],
