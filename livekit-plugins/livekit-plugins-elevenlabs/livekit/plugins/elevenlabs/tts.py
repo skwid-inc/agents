@@ -403,11 +403,6 @@ class SynthesizeStream(tts.SynthesizeStream):
                 sample_rate=self._opts.sample_rate,
                 num_channels=1,
             )
-            emitter = tts.SynthesizedAudioEmitter(
-                event_ch=self._event_ch,
-                request_id=request_id,
-                segment_id=segment_id,
-            )
 
             # 11labs protocol expects the first message to be an "init msg"
             init_pkt = dict(
@@ -444,8 +439,6 @@ class SynthesizeStream(tts.SynthesizeStream):
                     data_pkt = dict(text=f"{text} ")  # must always end with a space
                     self._mark_started()
                     await ws_conn.send_str(json.dumps(data_pkt))
-                    if any(char in text.strip() for char in [".", "!", "?"]):
-                        await ws_conn.send_str(json.dumps({"flush": True}))
                 if xml_content:
                     logger.warning("11labs stream ended with incomplete xml content")
                 await ws_conn.send_str(json.dumps({"flush": True}))
@@ -453,13 +446,12 @@ class SynthesizeStream(tts.SynthesizeStream):
             # consumes from decoder and generates events
             @utils.log_exceptions(logger=logger)
             async def generate_task():
-                # emitter = tts.SynthesizedAudioEmitter(
-                #     event_ch=self._event_ch,
-                #     request_id=request_id,
-                #     segment_id=segment_id,
-                # )
+                emitter = tts.SynthesizedAudioEmitter(
+                    event_ch=self._event_ch,
+                    request_id=request_id,
+                    segment_id=segment_id,
+                )
                 async for frame in decoder:
-                    logger.info("generate_task: pushing frame to emitter")
                     emitter.push(frame)
                 emitter.flush()
 
@@ -467,7 +459,6 @@ class SynthesizeStream(tts.SynthesizeStream):
             @utils.log_exceptions(logger=logger)
             async def recv_task():
                 nonlocal expected_text
-
                 received_text = ""
 
                 while True:
@@ -489,23 +480,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                     data = json.loads(msg.data)
                     if data.get("audio"):
                         b64data = base64.b64decode(data["audio"])
-                        logger.info("recv_task: pushing b64data to decoder")
-
-                        # Create a new decoder for this chunk
-                        chunk_decoder = utils.codecs.AudioStreamDecoder(
-                            sample_rate=self._opts.sample_rate,
-                            num_channels=1,
-                        )
-
-                        chunk_decoder.push(b64data)
-                        chunk_decoder.end_input()
-
-                        async for frame in chunk_decoder:
-                            logger.info("recv_task: pushing frame to emitter")
-                            emitter.push(frame)
-
-                        await chunk_decoder.aclose()
-                        emitter.flush()
+                        decoder.push(b64data)
 
                         if alignment := data.get("normalizedAlignment"):
                             received_text += "".join(alignment.get("chars", [])).replace(" ", "")
@@ -530,7 +505,7 @@ class SynthesizeStream(tts.SynthesizeStream):
             tasks = [
                 asyncio.create_task(send_task()),
                 asyncio.create_task(recv_task()),
-                # asyncio.create_task(generate_task()),
+                asyncio.create_task(generate_task()),
             ]
             try:
                 await asyncio.gather(*tasks)
