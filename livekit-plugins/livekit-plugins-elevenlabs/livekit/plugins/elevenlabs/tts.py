@@ -451,17 +451,13 @@ class SynthesizeStream(tts.SynthesizeStream):
                 await ws_conn.send_str(json.dumps({"flush": True}))
 
             # consumes from decoder and generates events
-            @utils.log_exceptions(logger=logger)
-            async def generate_task():
-                emitter = tts.SynthesizedAudioEmitter(
-                    event_ch=self._event_ch,
-                    request_id=request_id,
-                    segment_id=segment_id,
-                )
-                async for frame in decoder:
-                    logger.info(f"PUSHING DATA TO EMITTER")
-                    emitter.push(frame)
-                emitter.flush()
+            # @utils.log_exceptions(logger=logger)
+            # async def generate_task():
+
+            #     async for frame in decoder:
+            #         logger.info(f"PUSHING DATA TO EMITTER")
+            #         emitter.push(frame)
+            #     emitter.flush()
 
             # receives from ws and decodes audio
             @utils.log_exceptions(logger=logger)
@@ -498,11 +494,20 @@ class SynthesizeStream(tts.SynthesizeStream):
                             logger.info(
                                 f"RECEIVED TEXT: {received_text}\nEXPECTED TEXT: {expected_text_without_spaces}"
                             )
+                            emitter = tts.SynthesizedAudioEmitter(
+                                event_ch=self._event_ch,
+                                request_id=request_id,
+                                segment_id=segment_id,
+                            )
+                            async for frame in decoder:
+                                logger.info(f"PUSHING DATA TO EMITTER")
+                                emitter.push(frame)
+                            emitter.flush()
                             if received_text == expected_text_without_spaces:
                                 decoder.end_input()
                                 break
-                            else:
-                                decoder.flush()
+                            # else:
+                            #     decoder.flush()
 
                             # decoder = utils.codecs.AudioStreamDecoder(
                             #     sample_rate=self._opts.sample_rate,
@@ -526,7 +531,7 @@ class SynthesizeStream(tts.SynthesizeStream):
             tasks = [
                 asyncio.create_task(send_task()),
                 asyncio.create_task(recv_task()),
-                asyncio.create_task(generate_task()),
+                # asyncio.create_task(generate_task()),
             ]
             try:
                 await asyncio.gather(*tasks)
