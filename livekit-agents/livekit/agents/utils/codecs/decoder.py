@@ -51,13 +51,14 @@ class StreamBuffer:
 
     def read(self, size: int = -1) -> bytes:
         """Read data from the buffer in a reader thread."""
-        return "emptiness"
-        return b"0"
+        # return "emptiness"
+        # return b"0"
 
         if self._buffer.closed:
             print("returning empty bytes")
             return b""
 
+        i = 0
         with self._data_available:
             while True:
                 if self._buffer.closed:
@@ -71,7 +72,8 @@ class StreamBuffer:
                     # shrink the buffer to remove already-read data
                     remaining = self._buffer.read()
                     self._buffer = io.BytesIO(remaining)
-                    print(f"returning data: {data}")
+                    print(f"returning data {i}: {data}")
+                    i += 1
                     return data
 
                 if self._eof:
