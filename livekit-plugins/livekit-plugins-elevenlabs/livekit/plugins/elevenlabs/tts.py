@@ -511,9 +511,9 @@ class SynthesizeStream(tts.SynthesizeStream):
                             logger.info("recv_task: pushing frame to emitter")
                             emitter.push(frame)
 
-                        await chunk_decoder.aclose()
                         logger.info("about to call emitter.flush()")
                         emitter.flush()
+                        await chunk_decoder.aclose()
 
                         if alignment := data.get("normalizedAlignment"):
                             received_text += "".join(
