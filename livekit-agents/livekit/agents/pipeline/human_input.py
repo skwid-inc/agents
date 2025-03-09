@@ -153,7 +153,7 @@ class HumanInput(utils.EventEmitter[EventTypes]):
                 stt_stream.push_frame(ev.frame)
                 vad_stream.push_frame(ev.frame)
             logger.info("audio_stream_co: closing audio stream")
-            stt_stream.end_input()
+            # stt_stream.end_input()
 
         async def _vad_stream_co() -> None:
             async for ev in vad_stream:
