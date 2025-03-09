@@ -561,7 +561,7 @@ class SynthesizeStream(tts.SynthesizeStream):
             # receives from ws and decodes audio
             @utils.log_exceptions(logger=logger)
             async def recv_task():
-                nonlocal expected_text
+                nonlocal expected_text, i
 
                 received_text = ""
 
