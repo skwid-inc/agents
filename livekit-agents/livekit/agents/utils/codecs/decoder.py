@@ -74,7 +74,8 @@ class StreamBuffer:
                     # shrink the buffer to remove already-read data
                     remaining = self._buffer.read()
                     self._buffer = io.BytesIO(remaining)
-                    print(f"returning data {i}: {data}")
+                    # print(f"returning data {i}: {data}")
+                    print(f"returning data {i}")
                     i += 1
                     return data
 
