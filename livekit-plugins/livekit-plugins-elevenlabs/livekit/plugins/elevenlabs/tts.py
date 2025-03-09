@@ -568,7 +568,7 @@ class SynthesizeStream(tts.SynthesizeStream):
 
                 while True:
                     msg = await ws_conn.receive()
-                    logger.info(f"{i}: msg: {msg}, type: {msg.type}")
+                    logger.info(f"{i}: type: {msg.type}")
                     if msg.type in (
                         aiohttp.WSMsgType.CLOSED,
                         aiohttp.WSMsgType.CLOSE,
