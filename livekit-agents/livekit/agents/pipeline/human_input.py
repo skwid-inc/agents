@@ -48,6 +48,7 @@ class HumanInput(utils.EventEmitter[EventTypes]):
 
         self._room.on("track_published", self._subscribe_to_microphone)
         self._room.on("track_subscribed", self._subscribe_to_microphone)
+        self._room.on("disconnected", self._room_disconnected)
         self._subscribe_to_microphone()
 
     async def aclose(self) -> None:
@@ -62,6 +63,27 @@ class HumanInput(utils.EventEmitter[EventTypes]):
 
         if self._recognize_atask is not None:
             await utils.aio.gracefully_cancel(self._recognize_atask)
+
+    def _room_disconnected(self) -> None:
+        logger.info("room disconnected. closing human input")
+        loop = asyncio.get_running_loop()
+        loop.run_until_complete(self.aclose())
+        # asyncio.run(self.aclose())
+        # self._close_sync()
+        
+    def _close_sync(self) -> None:
+        """Synchronous version of close that doesn't await the async operations."""
+        if self._closed:
+            return
+        logger.info("closing human input: True")
+        self._closed = True
+        self._room.off("track_published", self._subscribe_to_microphone)
+        self._room.off("track_subscribed", self._subscribe_to_microphone)
+        self._speaking = False
+        
+        # Cancel the task without awaiting it
+        if self._recognize_atask is not None:
+            self._recognize_atask.cancel()
 
     @property
     def speaking(self) -> bool:
