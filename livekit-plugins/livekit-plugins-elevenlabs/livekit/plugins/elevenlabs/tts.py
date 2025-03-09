@@ -524,8 +524,8 @@ class SynthesizeStream(tts.SynthesizeStream):
                         else:
                             continue
 
-                    # data_pkt = dict(text=f"{text} ")  # must always end with a space
-                    data_pkt = dict(text=" "*100)  # must always end with a space
+                    data_pkt = dict(text=f"{text} ")  # must always end with a space
+                    # data_pkt = dict(text=" "*100)  # must always end with a space
                     self._mark_started()
                     logger.info(f"send_task: sending text: ~{text}~")
                     await ws_conn.send_str(json.dumps(data_pkt))
