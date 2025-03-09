@@ -53,6 +53,7 @@ class HumanInput(utils.EventEmitter[EventTypes]):
     async def aclose(self) -> None:
         if self._closed:
             raise RuntimeError("HumanInput already closed")
+
         self._closed = True
         self._room.off("track_published", self._subscribe_to_microphone)
         self._room.off("track_subscribed", self._subscribe_to_microphone)
