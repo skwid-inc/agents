@@ -437,6 +437,9 @@ class SpeechStream(stt.SpeechStream):
             # https://developers.deepgram.com/reference/listen-live#stream-keepalive
             try:
                 while True:
+                    if closing_ws:
+                        logger.info("closing keepalive task")
+                        return
                     logger.info("sending keepalive message")
                     await ws.send_str(SpeechStream._KEEPALIVE_MSG)
                     await asyncio.sleep(5)
@@ -494,6 +497,7 @@ class SpeechStream(stt.SpeechStream):
 
             # tell deepgram we are done sending audio/inputs
             closing_ws = True
+            logger.info("sending close message")
             await ws.send_str(SpeechStream._CLOSE_MSG)
 
         @utils.log_exceptions(logger=logger)
