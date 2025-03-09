@@ -105,6 +105,7 @@ class HumanInput(utils.EventEmitter[EventTypes]):
         """
         Receive the frames from the user audio stream and detect voice activity.
         """
+        logger.info("recognize_task: starting")
         vad_stream = self._vad.stream()
         stt_stream = self._stt.stream()
 
@@ -126,8 +127,10 @@ class HumanInput(utils.EventEmitter[EventTypes]):
         async def _audio_stream_co() -> None:
             # forward the audio stream to the VAD and STT streams
             async for ev in audio_stream:
+                logger.info(f"audio_stream_co: received frame: {ev}")
                 stt_stream.push_frame(ev.frame)
                 vad_stream.push_frame(ev.frame)
+            logger.info("audio_stream_co: closing audio stream")
 
         async def _vad_stream_co() -> None:
             async for ev in vad_stream:
