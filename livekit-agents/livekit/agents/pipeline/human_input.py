@@ -48,7 +48,7 @@ class HumanInput(utils.EventEmitter[EventTypes]):
 
         self._room.on("track_published", self._subscribe_to_microphone)
         self._room.on("track_subscribed", self._subscribe_to_microphone)
-        self._room.on("disconnected", self._room_disconnected)
+        # self._room.on("disconnected", self._room_disconnected)
         self._subscribe_to_microphone()
 
     async def aclose(self) -> None:
