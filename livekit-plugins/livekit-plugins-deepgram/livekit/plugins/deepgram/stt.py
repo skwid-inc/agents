@@ -437,6 +437,7 @@ class SpeechStream(stt.SpeechStream):
             # https://developers.deepgram.com/reference/listen-live#stream-keepalive
             try:
                 while True:
+                    logger.info("sending keepalive message")
                     await ws.send_str(SpeechStream._KEEPALIVE_MSG)
                     await asyncio.sleep(5)
             except Exception:
