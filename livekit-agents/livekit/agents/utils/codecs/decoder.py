@@ -52,7 +52,7 @@ class StreamBuffer:
     def read(self, size: int = -1) -> bytes:
         """Read data from the buffer in a reader thread."""
         # return "emptiness"
-        # return b"0"
+        return b"0x000x000x000x000x000x000x000x000x00"
 
         if self._buffer.closed:
             print("returning empty bytes")
