@@ -292,7 +292,6 @@ class FallbackRecognizeStream(RecognizeStream):
                             main_stream.flush()
 
                 if main_stream is not None:
-                    logger.info("forward_input_task: ending input")
                     main_stream.end_input()
 
         for i, stt in enumerate(self._fallback_adapter._stt_instances):

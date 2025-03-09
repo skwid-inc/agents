@@ -541,9 +541,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
         if not self._started:
             return
 
-        logger.info("closing voice assistant")
         self._room.off("participant_connected", self._on_participant_connected)
-        logger.info("Delegating deferred validation close")
         await self._deferred_validation.aclose()
 
     def _on_participant_connected(self, participant: rtc.RemoteParticipant):
