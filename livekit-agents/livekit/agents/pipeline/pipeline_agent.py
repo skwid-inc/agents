@@ -476,6 +476,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
         synthesis_handle = self._synthesize_agent_speech(new_handle.id, source)
         new_handle.initialize(source=source, synthesis_handle=synthesis_handle)
 
+        logger.info(f"checking inside say: {self._playing_speech}, {self._speech_q}, {self._playing_speech.nested_speech_done}")
         if self._playing_speech and not self._playing_speech.nested_speech_done:
             self._playing_speech.add_nested_speech(new_handle)
         elif self._speech_q:
