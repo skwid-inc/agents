@@ -913,6 +913,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
             logger.info("User question committed successfully")
 
         # wait for the play_handle to finish and check every 1s if the user question should be committed
+        logger.info(f"Attempting first commit of user question - {user_question}")
         _commit_user_question_if_needed()
 
         while not join_fut.done():
@@ -920,11 +921,13 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
                 [join_fut], return_when=asyncio.FIRST_COMPLETED, timeout=0.2
             )
 
+            logger.info(f"Attempting periodic commit of user question - {user_question}")
             _commit_user_question_if_needed()
 
             if speech_handle.interrupted:
                 break
 
+        logger.info(f"Attempting final commit of user question - {user_question}")
         _commit_user_question_if_needed()
 
         collected_text = speech_handle.synthesis_handle.tts_forwarder.played_text
