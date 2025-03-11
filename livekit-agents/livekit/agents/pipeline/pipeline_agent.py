@@ -606,36 +606,45 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
         def _on_final_transcript(ev: stt.SpeechEvent) -> None:
             new_transcript = ev.alternatives[0].text
             if not new_transcript:
+                logger.info("Received empty transcript, returning")
                 return
 
             logger.debug(
                 "received user transcript",
                 extra={"user_transcript": new_transcript},
             )
+            logger.info(f"Received final transcript: {new_transcript}")
 
             self._last_final_transcript_time = time.perf_counter()
+            logger.info(f"Updated last final transcript time to {self._last_final_transcript_time}")
 
             self._transcribed_text += (
                 " " if self._transcribed_text else ""
             ) + new_transcript
+            logger.info(f"Updated transcribed text to: {self._transcribed_text}")
 
             if self._opts.preemptive_synthesis:
                 if (
                     self._playing_speech is None
                     or self._playing_speech.allow_interruptions
                 ):
+                    logger.info("Initiating preemptive synthesis of agent reply")
                     self._synthesize_agent_reply()
 
             self._deferred_validation.on_human_final_transcript(
                 new_transcript, ev.alternatives[0].language
             )
+            logger.info(f"Validated human transcript with language: {ev.alternatives[0].language}")
 
             words = self._opts.transcription.word_tokenizer.tokenize(
                 text=new_transcript
             )
+            logger.info(f"Tokenized transcript into {len(words)} words")
+            
             if len(words) >= 3:
                 # VAD can sometimes not detect that the human is speaking
                 # to make the interruption more reliable, we also interrupt on the final transcript.
+                logger.info("Word count >= 3, attempting interruption if possible")
                 self._interrupt_if_possible()
 
         self._human_input.on("start_of_speech", _on_start_of_speech)
@@ -1163,28 +1172,33 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
                 )
 
             if should_ignore_input:
+                logger.info("Ignoring input and clearing transcribed text")
                 self._transcribed_text = ""
                 return
 
         if self._pending_agent_reply is None:
             if self._opts.preemptive_synthesis:
+                logger.debug("No pending reply but preemptive synthesis is enabled, returning")
                 return
 
             # as long as we don't have a pending reply, we need to synthesize it
             # in order to keep the conversation flowing.
             # transcript could be empty at this moment, if the user interrupted the agent
             # but did not generate any transcribed text.
+            logger.info("No pending reply, initiating agent reply synthesis")
             self._synthesize_agent_reply()
 
         assert self._pending_agent_reply is not None
 
         # due to timing, we could end up with two pushed agent replies inside the speech queue.
         # so make sure we directly interrupt every reply when validating a new one
+        logger.debug(f"Checking {len(self._speech_q)} speeches in queue for interruption")
         for speech in self._speech_q:
             if not speech.is_reply:
                 continue
 
             if speech.allow_interruptions:
+                logger.info(f"Interrupting speech {speech.id} in queue")
                 speech.interrupt()
 
         logger.debug(
@@ -1201,6 +1215,11 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
                 (self._last_final_transcript_time or 0) - self._last_speech_time, 0
             )
 
+            logger.info(
+                f"Collecting EOU metrics - time since last speech: {time_since_last_speech:.2f}s, "
+                f"transcription delay: {transcription_delay:.2f}s"
+            )
+
             eou_metrics = metrics.PipelineEOUMetrics(
                 timestamp=time.time(),
                 sequence_id=self._pending_agent_reply.id,
@@ -1209,6 +1228,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
             )
             self.emit("metrics_collected", eou_metrics)
 
+        logger.info("Adding pending reply to speech playout queue")
         self._add_speech_for_playout(self._pending_agent_reply)
         self._pending_agent_reply = None
         self._transcribed_interim_text = ""
