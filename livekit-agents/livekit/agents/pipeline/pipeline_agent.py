@@ -771,14 +771,24 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
                 llm_stream = await llm_stream
 
             if llm_stream is False:
+                logger.info("LLM stream is False, user chose not to synthesize an answer")
                 # user chose not to synthesize an answer, so we do not want to
                 # leave the same question in chat context. otherwise it would be
                 # unintentionally committed when the next set of speech comes in.
                 if len(self._transcribed_text) >= len(handle.user_question):
+                    logger.debug(
+                        "Removing user question from transcribed text",
+                        extra={
+                            "transcribed_text": self._transcribed_text,
+                            "user_question": handle.user_question,
+                        }
+                    )
                     self._transcribed_text = self._transcribed_text[
                         len(handle.user_question) :
                     ]
+                    logger.info(f"Updated transcribed text to: {self._transcribed_text}")
                 handle.cancel()
+                logger.info("Cancelled speech handle, returning")
                 return
 
             # fallback to default impl if no custom/user stream is returned
@@ -869,6 +879,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
                 or synthesis_handle.interrupted
                 or speech_handle.user_committed
             ):
+                logger.info("Skipping user question commit - no question, interrupted, or already committed")
                 return
 
             is_using_tools = isinstance(speech_handle.source, LLMStream) and len(
@@ -886,14 +897,20 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
                     and not join_fut.done()
                 )
             ):
+                logger.info(
+                    "Skipping user question commit - insufficient speech played "
+                    f"(played {play_handle.time_played:.2f}s < min {self.MIN_TIME_PLAYED_FOR_COMMIT}s)"
+                )
                 return
 
+            logger.info(f"Committing user question to chat context: {user_question}")
             user_msg = ChatMessage.create(text=user_question, role="user")
             self._chat_ctx.messages.append(user_msg)
             self.emit("user_speech_committed", user_msg)
 
             self._transcribed_text = self._transcribed_text[len(user_question) :]
             speech_handle.mark_user_committed()
+            logger.info("User question committed successfully")
 
         # wait for the play_handle to finish and check every 1s if the user question should be committed
         _commit_user_question_if_needed()
