@@ -795,7 +795,13 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
     def _commit_user_question(self) -> None:
 
         speech_handle = self._playing_speech
+        synthesis_handle = speech_handle.synthesis_handle
+        play_handle = synthesis_handle.play()
+        join_fut = play_handle.join()
         user_question = speech_handle.user_question
+        is_using_tools = isinstance(speech_handle.source, LLMStream) and len(
+            speech_handle.source.function_calls
+        )
 
         user_msg = ChatMessage.create(text=user_question, role="user")
         self._chat_ctx.messages.append(user_msg)
