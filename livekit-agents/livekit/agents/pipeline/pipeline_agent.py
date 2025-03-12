@@ -803,8 +803,8 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
             is_using_tools = isinstance(speech_handle.source, LLMStream) and len(
                 speech_handle.source.function_calls
             )
-        elif AppConfig().call_metadata["last_human_message"] is not None or AppConfig().call_metadata["last_human_message"] != "":
-            user_question = AppConfig().call_metadata["last_human_message"]
+        elif AppConfig().call_metadata.get("last_human_message") is not None or AppConfig().call_metadata.get("last_human_message") != "":
+            user_question = AppConfig().call_metadata.get("last_human_message")
             AppConfig().call_metadata["last_human_message"] = None
         else:
             return
