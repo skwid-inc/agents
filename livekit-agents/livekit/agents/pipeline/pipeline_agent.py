@@ -478,7 +478,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
         synthesis_handle = self._synthesize_agent_speech(new_handle.id, source)
         new_handle.initialize(source=source, synthesis_handle=synthesis_handle)
 
-        self._commit_user_question()
+        
 
         if self._playing_speech and not self._playing_speech.nested_speech_done:
             self._playing_speech.add_nested_speech(new_handle)
@@ -496,6 +496,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
             else:
                 text = fnc_source
 
+            logger.info("adding speech to function call chat context")
             call_ctx.add_extra_chat_message(
                 ChatMessage.create(text=text, role="assistant")
             )
@@ -504,6 +505,8 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
                 extra={"text": text},
             )
 
+
+        self._commit_user_question()
         return new_handle
 
     def interrupt(self, interrupt_all: bool = True) -> None:
@@ -792,13 +795,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
     def _commit_user_question(self) -> None:
 
         speech_handle = self._playing_speech
-        synthesis_handle = speech_handle.synthesis_handle
-        play_handle = synthesis_handle.play()
-        join_fut = play_handle.join()
         user_question = speech_handle.user_question
-        is_using_tools = isinstance(speech_handle.source, LLMStream) and len(
-            speech_handle.source.function_calls
-        )
 
         user_msg = ChatMessage.create(text=user_question, role="user")
         self._chat_ctx.messages.append(user_msg)
