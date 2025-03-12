@@ -795,13 +795,19 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
     def _commit_user_question(self) -> None:
 
         speech_handle = self._playing_speech
-        synthesis_handle = speech_handle.synthesis_handle
-        play_handle = synthesis_handle.play()
-        join_fut = play_handle.join()
-        user_question = speech_handle.user_question
-        is_using_tools = isinstance(speech_handle.source, LLMStream) and len(
-            speech_handle.source.function_calls
-        )
+        if speech_handle is not None:
+            synthesis_handle = speech_handle.synthesis_handle
+            play_handle = synthesis_handle.play()
+            join_fut = play_handle.join()
+            user_question = speech_handle.user_question
+            is_using_tools = isinstance(speech_handle.source, LLMStream) and len(
+                speech_handle.source.function_calls
+            )
+        elif AppConfig().call_metadata["last_human_message"] is not None or AppConfig().call_metadata["last_human_message"] != "":
+            user_question = AppConfig().call_metadata["last_human_message"]
+            AppConfig().call_metadata["last_human_message"] = None
+        else:
+            return
 
         user_msg = ChatMessage.create(text=user_question, role="user")
         self._chat_ctx.messages.append(user_msg)
