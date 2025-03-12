@@ -808,6 +808,9 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
             AppConfig().call_metadata["last_human_message"] = None
         else:
             return
+        
+        if user_question is None or user_question == "":
+            return
 
         user_msg = ChatMessage.create(text=user_question, role="user")
         self._chat_ctx.messages.append(user_msg)
