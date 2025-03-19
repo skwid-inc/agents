@@ -1392,7 +1392,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
             )
             return False
 
-        # We should only have this check when we are actively speaking, if not we should interrupt the agent process
+        # We should only have the check for min words when we are actively speaking, if not we should interrupt the agent process
         try:
             spoken_text = (
                 self._playing_speech.synthesis_handle.tts_forwarder.played_text
