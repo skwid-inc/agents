@@ -615,6 +615,9 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
                 f"received user transcript - {new_transcript}",
                 extra={"user_transcript": new_transcript},
             )
+            logger.info(
+                f"Is uninterruptible - {AppConfig().get_call_metadata().get('is_speaking_uninterruptible_message')}"
+            )
             AppConfig().received_user_transcript_timestamp = time.time()
 
             self._last_final_transcript_time = time.perf_counter()
