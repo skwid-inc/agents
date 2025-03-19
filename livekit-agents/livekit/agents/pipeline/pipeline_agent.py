@@ -1323,7 +1323,13 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
             if not speech.is_reply:
                 continue
 
-            if speech.allow_interruptions:
+            if speech.allow_interruptions and not AppConfig().get_call_metadata().get(
+                "is_speaking_uninterruptible_message", False
+            ):
+                logger.info(
+                    f"_validate_reply_if_possible: Interrupting speech because the agent is not speaking an uninterruptible message - {self._transcribed_text}"
+                )
+                self._transcribed_text = ""
                 speech.interrupt()
 
         logger.debug(
