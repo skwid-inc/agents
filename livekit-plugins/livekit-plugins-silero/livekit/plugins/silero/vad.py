@@ -307,6 +307,9 @@ class VADStream(agents.vad.VADStream):
                 )
 
                 if self._input_sample_rate != self._opts.sample_rate:
+                    logger.info(
+                        f"resampling needed: the input sample rate isn't the same as the model's sample rate used for inference"
+                    )
                     # resampling needed: the input sample rate isn't the same as the model's
                     # sample rate used for inference
                     resampler = rtc.AudioResampler(
@@ -453,11 +456,20 @@ class VADStream(agents.vad.VADStream):
                 )
 
                 if p >= self._opts.activation_threshold:
+                    logger.info(
+                        f"Human speech detected because speech is above activation threshold"
+                    )
                     speech_threshold_duration += window_duration
                     silence_threshold_duration = 0.0
 
                     if not pub_speaking:
+                        logger.info(
+                            f"The human is not currently speaking, so we are checking if the speech is above the minimum speech duration"
+                        )
                         if speech_threshold_duration >= self._opts.min_speech_duration:
+                            logger.info(
+                                f"The human started speaking, so we are starting to record"
+                            )
                             pub_speaking = True
                             pub_silence_duration = 0.0
                             pub_speech_duration = speech_threshold_duration
@@ -475,6 +487,9 @@ class VADStream(agents.vad.VADStream):
                             )
 
                 else:
+                    logger.info(
+                        f"Adding silence because speech is below activation threshold"
+                    )
                     silence_threshold_duration += window_duration
                     speech_threshold_duration = 0.0
 
