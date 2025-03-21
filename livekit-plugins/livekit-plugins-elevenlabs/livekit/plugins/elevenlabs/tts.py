@@ -434,12 +434,14 @@ class SynthesizeStream(tts.SynthesizeStream):
 
                     if word_stream is None:
                         # new segment (after flush for e.g)
+                        logger.info(f"Creating new word stream for: {input}")
                         word_stream = self._opts.word_tokenizer.stream()
                         self._segments_ch.send_nowait(word_stream)
                     word_stream.push_text(input)
                 elif isinstance(input, self._FlushSentinel):
                     if word_stream is not None:
                         word_stream.end_input()
+                    logger.info(f"Ending word stream for: {input}")
                     word_stream = None
             if word_stream is not None:
                 word_stream.end_input()
@@ -566,7 +568,9 @@ class SynthesizeStream(tts.SynthesizeStream):
                     data = json.loads(msg.data)
                     if not received_first_data_packet:
                         received_first_data_packet = True
-                        AppConfig().tts_first_data_packet_timestamp = time.perf_counter()
+                        AppConfig().tts_first_data_packet_timestamp = (
+                            time.perf_counter()
+                        )
                     if data.get("audio"):
                         received_text_to_print = ""
                         if alignment := data.get("normalizedAlignment"):
