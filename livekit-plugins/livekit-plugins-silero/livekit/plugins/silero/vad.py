@@ -292,6 +292,8 @@ class VADStream(agents.vad.VADStream):
             if not isinstance(input_frame, rtc.AudioFrame):
                 continue  # ignore flush sentinel for now
 
+            print(f"input sample rate: {self._input_sample_rate}")
+
             if not self._input_sample_rate:
                 self._input_sample_rate = input_frame.sample_rate
 
