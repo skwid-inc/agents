@@ -51,6 +51,7 @@ class ConnectionPool(Generic[T]):
         self._to_close: Set[T] = set()
 
         self._prewarm_task: Optional[weakref.ref[asyncio.Task]] = None
+        self._remove_tasks: Set[asyncio.Task] = set()
         self._num_connections = 0
 
     async def _connect(self) -> T:
@@ -85,11 +86,11 @@ class ConnectionPool(Generic[T]):
         try:
             yield conn
         except Exception:
-            await self.remove(conn)
+            self._remove_tasks.add(weakref.ref(asyncio.create_task(self.remove(conn))))
             raise
         else:
             if one_time:
-                await self.remove(conn)
+                self._remove_tasks.add(weakref.ref(asyncio.create_task(self.remove(conn))))
             else:
                 self.put(conn)
 
