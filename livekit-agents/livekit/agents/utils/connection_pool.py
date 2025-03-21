@@ -157,7 +157,7 @@ class ConnectionPool(Generic[T]):
         self._connections.clear()
         self._available.clear()
 
-    def prewarm(self) -> None:
+    def prewarm(self, n: int = 1) -> None:
         """Initiate prewarming of the connection pool without blocking.
 
         This method starts a background task that creates a new connection if none exist.
@@ -168,8 +168,9 @@ class ConnectionPool(Generic[T]):
 
         async def _prewarm_impl():
             if not self._connections:
-                conn = await self._connect()
-                self._available.add(conn)
+                for _ in range(n):
+                    conn = await self._connect()
+                    self._available.add(conn)
 
         task = asyncio.create_task(_prewarm_impl())
         self._prewarm_task = weakref.ref(task)
