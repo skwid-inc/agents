@@ -204,6 +204,7 @@ class TTS(tts.TTS):
             "Exeter Finance LLC" in text
             and "Dallas" not in text
             and "Carrollton" not in text
+            and "PO Box 650598" not in text
         ):
             self.update_options(speed="fast")
         elif "Por favor diga español" in text:
@@ -212,7 +213,7 @@ class TTS(tts.TTS):
                 model="sonic-multilingual",
                 language="es",
             )
-        elif "Carrollton" in text or "Dallas" in text or "515 Flower Street" in text:
+        elif "Carrollton" in text or "Dallas" in text or "PO Box 650598" in text:
             logging.info(
                 "Carrollton, Dallas, or 515 Flower Street detected, setting speed to slowest"
             )
