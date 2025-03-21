@@ -309,6 +309,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                 )
             base_pkt = _to_cartesia_options(self._opts)
             async for ev in self._sent_tokenizer_stream:
+                base_pkt = _to_cartesia_options(self._opts)
                 token_pkt = base_pkt.copy()
                 token_pkt["context_id"] = request_id
                 token_pkt["transcript"] = ev.token + " "
@@ -340,6 +341,13 @@ class SynthesizeStream(tts.SynthesizeStream):
                 if isinstance(data, self._FlushSentinel):
                     self._sent_tokenizer_stream.flush()
                     continue
+                if "Por favor diga español" in data:
+                    # These options are updated after the language switch consent flow depending on the language
+                    self.update_options(
+                        voice="db832ebd-3cb6-42e7-9d47-912b425adbaa",
+                        model="sonic-multilingual",
+                        language="es",
+                    )
                 self._sent_tokenizer_stream.push_text(data)
             self._sent_tokenizer_stream.end_input()
 
