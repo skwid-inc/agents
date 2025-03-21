@@ -23,6 +23,7 @@ from typing import Literal
 
 import numpy as np
 import onnxruntime  # type: ignore
+from app_config import AppConfig
 from livekit import agents, rtc
 from livekit.agents import utils
 
@@ -306,6 +307,10 @@ class VADStream(agents.vad.VADStream):
                     dtype=np.int16,
                 )
 
+                logger.info(f"LOGGING VAD SAMPLE RATE")
+                logger.info(f"Input sample rate: {self._input_sample_rate}")
+                logger.info(f"Model sample rate: {self._opts.sample_rate}")
+
                 if self._input_sample_rate != self._opts.sample_rate:
                     # resampling needed: the input sample rate isn't the same as the model's
                     # sample rate used for inference
@@ -348,6 +353,52 @@ class VADStream(agents.vad.VADStream):
                     out=inference_f32_data,
                     dtype=np.float32,
                 )
+                # Write inference_f32_data to a continuous WAV file for debugging
+                # try:
+                #     import os
+                #     import wave
+
+                #     debug_dir = os.path.join(os.getcwd(), "vad_debug")
+                #     os.makedirs(debug_dir, exist_ok=True)
+
+                #     # Convert float32 to int16 for WAV format
+                #     int16_data = (inference_f32_data * np.iinfo(np.int16).max).astype(
+                #         np.int16
+                #     )
+
+                #     # Use a fixed filename for the continuous recording
+                #     filename = os.path.join(debug_dir, "vad_continuous_recording.wav")
+
+                #     # Check if file exists to append or create new
+                #     if os.path.exists(filename):
+                #         # Read existing file to get parameters
+                #         with wave.open(filename, "rb") as wf:
+                #             channels = wf.getnchannels()
+                #             sampwidth = wf.getsampwidth()
+                #             framerate = wf.getframerate()
+                #             existing_frames = wf.readframes(wf.getnframes())
+
+                #         # Create new file with combined frames
+                #         with wave.open(filename + ".temp", "wb") as wf:
+                #             wf.setnchannels(channels)
+                #             wf.setsampwidth(sampwidth)
+                #             wf.setframerate(framerate)
+                #             wf.writeframes(existing_frames)
+                #             wf.writeframes(int16_data.tobytes())
+
+                #         # Replace old file with new one
+                #         os.replace(filename + ".temp", filename)
+                #     else:
+                #         # Create new file if it doesn't exist
+                #         with wave.open(filename, "wb") as wf:
+                #             wf.setnchannels(1)  # Mono
+                #             wf.setsampwidth(2)  # 2 bytes for int16
+                #             wf.setframerate(self._opts.sample_rate)
+                #             wf.writeframes(int16_data.tobytes())
+
+                #     # logger.debug(f"Appended VAD audio to continuous recording at {filename}")
+                # except Exception as e:
+                #     logger.error(f"Failed to save VAD audio: {e}")
 
                 # run the inference
                 p = await self._loop.run_in_executor(
@@ -425,6 +476,8 @@ class VADStream(agents.vad.VADStream):
                     )
 
                 if pub_speaking:
+                    logger.info("VAD SPEECH DETECTED")
+                    AppConfig().call_metadata["timestamp_of_vad_speech"] = time.time()
                     pub_speech_duration += window_duration
                 else:
                     pub_silence_duration += window_duration
