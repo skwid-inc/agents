@@ -212,9 +212,9 @@ class TTS(tts.TTS):
                 model="sonic-multilingual",
                 language="es",
             )
-        elif "Carrollton" in text or "Dallas" in text or "515 Flower St" in text:
+        elif "Carrollton" in text or "Dallas" in text or "515 Flower Street" in text:
             logging.info(
-                "Carrollton, Dallas, or 515 Flower St detected, setting speed to slowest"
+                "Carrollton, Dallas, or 515 Flower Street detected, setting speed to slowest"
             )
             self.update_options(speed="slow")
         else:
