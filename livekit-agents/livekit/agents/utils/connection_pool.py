@@ -74,7 +74,7 @@ class ConnectionPool(Generic[T]):
         self._to_close.clear()
 
     @asynccontextmanager
-    async def connection(self) -> AsyncGenerator[T, None]:
+    async def connection(self, one_time: bool = False) -> AsyncGenerator[T, None]:
         """Get a connection from the pool and automatically return it when done.
 
         Yields:
@@ -87,7 +87,10 @@ class ConnectionPool(Generic[T]):
             self.remove(conn)
             raise
         else:
-            self.put(conn)
+            if one_time:
+                self.remove(conn)
+            else:
+                self.put(conn)
 
     async def get(self) -> T:
         """Get an available connection or create a new one if needed.
