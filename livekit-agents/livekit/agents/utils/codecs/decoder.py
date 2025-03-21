@@ -119,7 +119,9 @@ class AudioStreamDecoder:
             self.__class__._executor = ThreadPoolExecutor(
                 max_workers=self.__class__._max_workers
             )
+        logger.info("opening container")
         self._container = av.open(self._input_buf)
+        logger.info("container opened")
 
     def push(self, chunk: bytes):
         self._input_buf.write(chunk)
@@ -143,7 +145,9 @@ class AudioStreamDecoder:
             if not audio_stream:
                 return
             while True:
+                print("decoding audio")
                 for frame in self._container.decode(audio_stream):
+                    print("decoded audio frame")
                     if self._closed:
                         return
                     for resampled_frame in resampler.resample(frame):
@@ -159,6 +163,7 @@ class AudioStreamDecoder:
                                 ),
                             )
                         )
+                print("decoded all audio frames")
         except Exception:
             logger.exception("error decoding audio")
         finally:
