@@ -547,11 +547,6 @@ class SynthesizeStream(tts.SynthesizeStream):
 
                 received_text = ""
                 received_first_data_packet = False
-                # Create a new decoder for this chunk
-                chunk_decoder = utils.codecs.AudioStreamDecoder(
-                    sample_rate=self._opts.sample_rate,
-                    num_channels=1,
-                )
                 while True:
                     msg = await ws_conn.receive()
                     if msg.type in (
@@ -594,6 +589,12 @@ class SynthesizeStream(tts.SynthesizeStream):
                             )
                         b64data = base64.b64decode(data["audio"])
 
+                        # Create a new decoder for this chunk
+                        chunk_decoder = utils.codecs.AudioStreamDecoder(
+                            sample_rate=self._opts.sample_rate,
+                            num_channels=1,
+                        )
+
                         emitter = tts.SynthesizedAudioEmitter(
                             event_ch=self._event_ch,
                             request_id=request_id,
@@ -624,6 +625,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                         logger.info(
                             f"recv_task: closing decoder for text: {received_text_to_print}"
                         )
+                        await chunk_decoder.aclose()
 
                         if alignment := data.get("normalizedAlignment"):
                             received_text += "".join(
@@ -671,7 +673,6 @@ class SynthesizeStream(tts.SynthesizeStream):
                             request_id=request_id,
                             body=None,
                         )
-                await chunk_decoder.aclose()
 
             tasks = [
                 asyncio.create_task(send_task()),

@@ -119,9 +119,6 @@ class AudioStreamDecoder:
             self.__class__._executor = ThreadPoolExecutor(
                 max_workers=self.__class__._max_workers
             )
-        logger.info("opening container")
-        self._container = av.open(self._input_buf)
-        logger.info("container opened")
 
     def push(self, chunk: bytes):
         self._input_buf.write(chunk)
@@ -134,7 +131,10 @@ class AudioStreamDecoder:
 
     def _decode_loop(self):
         try:
-            audio_stream = next(s for s in self._container.streams if s.type == "audio")
+            logger.info("decoding audio")
+            container = av.open(self._input_buf)
+            logger.info("container opened")
+            audio_stream = next(s for s in container.streams if s.type == "audio")
             resampler = av.AudioResampler(
                 # convert to signed 16-bit little endian
                 format="s16",
@@ -144,26 +144,22 @@ class AudioStreamDecoder:
             # TODO: handle error where audio stream isn't found
             if not audio_stream:
                 return
-            while True:
-                print("decoding audio")
-                for frame in self._container.decode(audio_stream):
-                    print("decoded audio frame")
-                    if self._closed:
-                        return
-                    for resampled_frame in resampler.resample(frame):
-                        nchannels = len(resampled_frame.layout.channels)
-                        data = resampled_frame.to_ndarray().tobytes()
-                        self._output_ch.send_nowait(
-                            rtc.AudioFrame(
-                                data=data,
-                                num_channels=nchannels,
-                                sample_rate=int(resampled_frame.sample_rate),
-                                samples_per_channel=int(
-                                    resampled_frame.samples / nchannels
-                                ),
-                            )
+            for frame in container.decode(audio_stream):
+                if self._closed:
+                    return
+                for resampled_frame in resampler.resample(frame):
+                    nchannels = len(resampled_frame.layout.channels)
+                    data = resampled_frame.to_ndarray().tobytes()
+                    self._output_ch.send_nowait(
+                        rtc.AudioFrame(
+                            data=data,
+                            num_channels=nchannels,
+                            sample_rate=int(resampled_frame.sample_rate),
+                            samples_per_channel=int(
+                                resampled_frame.samples / nchannels
+                            ),
                         )
-                print("decoded all audio frames")
+                    )
         except Exception:
             logger.exception("error decoding audio")
         finally:
