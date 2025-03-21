@@ -210,7 +210,7 @@ class TTS(tts.TTS):
         return self._session
 
     def prewarm(self) -> None:
-        self._pool.prewarm()
+        self._pool.prewarm(5)
 
     async def list_voices(self) -> List[Voice]:
         async with self._ensure_session().get(
