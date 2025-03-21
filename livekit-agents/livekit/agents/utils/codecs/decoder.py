@@ -69,8 +69,8 @@ class StreamBuffer:
                     self._buffer = io.BytesIO(remaining)
                     return data
 
-                if self._eof:
-                    return b""
+                # if self._eof:
+                #     return b""
 
                 self._data_available.wait()
 
