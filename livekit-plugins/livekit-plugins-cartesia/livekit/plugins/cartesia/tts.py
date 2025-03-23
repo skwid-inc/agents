@@ -25,6 +25,7 @@ from typing import Any, Optional
 
 import aiohttp
 from app_config import AppConfig
+from helpers import replace_numbers_with_words_cartesia
 from livekit.agents import (
     APIConnectionError,
     APIConnectOptions,
@@ -184,6 +185,39 @@ class TTS(tts.TTS):
         if emotion is not None:
             self._opts.emotion = emotion
 
+    def normalize_for_synthesis(self, text: str) -> str:
+        if (
+            "Exeter Finance LLC" in text
+            and "Dallas" not in text
+            and "Carrollton" not in text
+        ):
+            self.update_options(speed="fast")
+        elif "Por favor diga español" in text:
+            # These options are updated after the language switch consent flow depending on the language
+            self.update_options(
+                voice="db832ebd-3cb6-42e7-9d47-912b425adbaa",
+                model="sonic-multilingual",
+                language="es",
+            )
+        elif "Carrollton" in text or "Dallas" in text:
+            logging.info("Carrollton or Dallas detected, setting speed to slowest")
+            self.update_options(speed="slow")
+        else:
+            self.update_options(speed="normal")
+
+        text = replace_numbers_with_words_cartesia(text, lang=AppConfig().language)
+        text = text.replace("DETERMINISTIC", "")
+        text = text.replace("past due", "past-due")
+        text = text.replace("processing fees on", "processing-fees-on")
+        text = text.replace("GAP", "gap")
+        text = text.replace("routing", "<<ˈr|aʊ|t|ɪ|ŋ|g|>>")
+        text = text.replace("live agent", "<<'l|aɪ|v|>> agent")
+        text = text.replace("GoFi", "<<ˈɡ|oʊ|f|aɪ|>>")
+        text = text.replace("Ally", "al-eye")
+        text = text.replace("ACIpayonline", "ACI payonline")
+
+        return text
+
     def synthesize(
         self,
         text: str,
@@ -341,14 +375,9 @@ class SynthesizeStream(tts.SynthesizeStream):
                 if isinstance(data, self._FlushSentinel):
                     self._sent_tokenizer_stream.flush()
                     continue
-                if "Por favor diga español" in data:
-                    # These options are updated after the language switch consent flow depending on the language
-                    self.update_options(
-                        voice="db832ebd-3cb6-42e7-9d47-912b425adbaa",
-                        model="sonic-multilingual",
-                        language="es",
-                    )
-                self._sent_tokenizer_stream.push_text(data)
+
+                normalized_data = self._tts.normalize_for_synthesis(data)
+                self._sent_tokenizer_stream.push_text(normalized_data)
             self._sent_tokenizer_stream.end_input()
 
         async def _recv_task(ws: aiohttp.ClientWebSocketResponse):
