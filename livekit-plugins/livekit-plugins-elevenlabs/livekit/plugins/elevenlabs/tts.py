@@ -665,15 +665,15 @@ class SynthesizeStream(tts.SynthesizeStream):
                         frame_count = 0
                         async for frame in chunk_decoder:
                             frame_count += 1
+                            # only log the first frame to avoid spamming the logs
                             if frame_count > 1:
-                                log.tts(
+                                log.verbose(
                                     f"recv_task: pushing frame {frame_count} to emitter for text: {received_text_to_print}",
                                     categories=["TTS"],
                                 )
                             else:
-                                log.verbose(
-                                    f"recv_task: pushing frame {frame_count} to emitter for text: {received_text_to_print}",
-                                    categories=["TTS"],
+                                log.tts(
+                                    f"recv_task: pushing frame {frame_count} to emitter for text: {received_text_to_print}"
                                 )
                             emitter.push(frame)
 
