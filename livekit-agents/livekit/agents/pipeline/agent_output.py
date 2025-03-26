@@ -15,6 +15,7 @@ from .. import transcription as agent_transcription
 from .. import tts as text_to_speech
 from .agent_playout import AgentPlayout, PlayoutHandle
 from .log import logger
+from custom_tokenize import StreamFlusher
 
 SpeechSource = Union[AsyncIterable[str], str, Awaitable[str]]
 
@@ -289,12 +290,13 @@ class AgentOutput:
         read_transcript_atask: asyncio.Task | None = None
 
         try:
-            buffer = ""  # Intermediary buffer to track text for flushing
             async for seg in tts_source:
                 logger.info(f"segment: {seg}")
                 if tts_stream is None:
                     logger.info("creating new tts stream")
                     tts_stream = handle._tts.stream()
+                    flusher = StreamFlusher(tts_stream)
+
                     read_tts_atask_id = f"ReadTTS-{str(uuid.uuid4())}"
                     logger.info(f"Starting task: {read_tts_atask_id}")
                     pending_tasks = (
@@ -328,25 +330,9 @@ class AgentOutput:
 
                     read_transcript_atask.add_done_callback(_post_task_callback_2)
 
-                logger.info(f"pushing text: {seg}")
-                tts_stream.push_text(seg)
+                logger.info(f"Agent Output seg: {seg}")
 
-                buffer += seg
-
-                # Inside your loop where you decide to flush:
-                skip_flush_pattern = re.compile(
-                    r"(?:\$[\d,]+\.?\d*%?$|\d+\.\d*%?$)"  # optional dollar sign + decimal + optional % OR just decimal + optional %
-                )
-
-                potential_incomplete_number = skip_flush_pattern.search(buffer)
-
-                if (
-                    re.search(r"[.!?](?!\d)", buffer)
-                    and not potential_incomplete_number
-                ):
-                    logger.info(f"flushing tts stream with buffer: {buffer}")
-                    tts_stream.flush()
-                    buffer = ""
+                flusher.push_text(seg)
 
             if tts_stream is not None:
                 logger.info("ending tts stream")
