@@ -29,6 +29,7 @@ from urllib.parse import urlencode
 import aiohttp
 import numpy as np
 from app_config import AppConfig
+from custom_logger import log
 from livekit import rtc
 from livekit.agents import (
     DEFAULT_API_CONNECT_OPTIONS,
@@ -40,9 +41,8 @@ from livekit.agents import (
     utils,
 )
 from livekit.agents.utils import AudioBuffer
-
-from ._utils import PeriodicCollector
 from .log import logger
+from ._utils import PeriodicCollector
 from .models import DeepgramLanguages, DeepgramModels
 
 BASE_URL = "https://api.deepgram.com/v1/listen"
@@ -450,7 +450,7 @@ class SpeechStream(stt.SpeechStream):
         @utils.log_exceptions(logger=logger)
         async def send_task(ws: aiohttp.ClientWebSocketResponse):
             nonlocal closing_ws
-            logger.info("inside send_task")
+            log.stt("inside send_task")
             # forward audio to deepgram in chunks of 50ms
             samples_20ms = self._opts.sample_rate // 50
             audio_bstream = utils.audio.AudioByteStream(
@@ -505,7 +505,7 @@ class SpeechStream(stt.SpeechStream):
                         and AppConfig().get_call_metadata().get("should_flush_stt")
                         and current_time - last_transcript_timestamp >= 0.3
                     ):
-                        logger.info(
+                        log.stt(
                             "Deepgram: Sending finalize message based on timing conditions"
                         )
                         AppConfig().stt_flush_request = current_time
@@ -523,7 +523,7 @@ class SpeechStream(stt.SpeechStream):
 
             # tell deepgram we are done sending audio/inputs
             closing_ws = True
-            logger.info("Deepgram: About to send close message")
+            log.stt("Deepgram: About to send close message")
             await ws.send_str(SpeechStream._CLOSE_MSG)
 
         @utils.log_exceptions(logger=logger)
@@ -545,13 +545,13 @@ class SpeechStream(stt.SpeechStream):
                     )
 
                 if msg.type != aiohttp.WSMsgType.TEXT:
-                    logger.warning("unexpected deepgram message type %s", msg.type)
+                    log.warning("unexpected deepgram message type %s", msg.type)
                     continue
 
                 try:
                     self._process_stream_event(json.loads(msg.data))
                 except Exception:
-                    logger.exception("failed to process deepgram message")
+                    log.exception("failed to process deepgram message")
 
         ws: aiohttp.ClientWebSocketResponse | None = None
 
@@ -699,7 +699,7 @@ class SpeechStream(stt.SpeechStream):
         elif data["type"] == "Metadata":
             pass  # metadata is too noisy
         else:
-            logger.warning("received unexpected message from deepgram %s", data)
+            log.warning("received unexpected message from deepgram %s", data)
 
 
 def live_transcription_to_speech_data(
@@ -787,7 +787,7 @@ def _validate_model(
         "nova-3-general",
     }
     if language not in ("en-US", "en") and model in en_only_models:
-        logger.warning(
+        log.warning(
             f"{model} does not support language {language}, falling back to nova-2-general"
         )
         return "nova-2-general"

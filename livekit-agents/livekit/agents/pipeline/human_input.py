@@ -10,7 +10,7 @@ from livekit import rtc
 from .. import stt as speech_to_text
 from .. import transcription, utils
 from .. import vad as voice_activity_detection
-from .log import logger
+from custom_logger import log
 
 EventTypes = Literal[
     "start_of_speech",
@@ -51,6 +51,7 @@ class HumanInput(utils.EventEmitter[EventTypes]):
         self._room.on("track_published", self._subscribe_to_microphone)
         self._room.on("track_subscribed", self._subscribe_to_microphone)
         self._subscribe_to_microphone()
+        self.first_vad_speech = False
 
     async def aclose(self) -> None:
         if self._closed:
@@ -101,11 +102,12 @@ class HumanInput(utils.EventEmitter[EventTypes]):
                 )
                 break
 
-    @utils.log_exceptions(logger=logger)
+    @utils.log_exceptions(logger=log)
     async def _recognize_task(self, audio_stream: rtc.AudioStream) -> None:
         """
         Receive the frames from the user audio stream and detect voice activity.
         """
+        log.pipeline("Starting _recognize_task")
         vad_stream = self._vad.stream()
         stt_stream = self._stt.stream()
 
@@ -135,7 +137,9 @@ class HumanInput(utils.EventEmitter[EventTypes]):
         async def _vad_stream_co() -> None:
             async for ev in vad_stream:
                 if ev.speaking:
-                    logger.info("VAD SPEECH DETECTED")
+                    if not self.first_vad_speech:
+                        self.first_vad_speech = True
+                        log.pipeline("VAD SPEECH DETECTED")
                     AppConfig().call_metadata["timestamp_of_vad_speech"] = time.time()
                 if ev.type == voice_activity_detection.VADEventType.START_OF_SPEECH:
                     self._speaking = True
@@ -145,6 +149,8 @@ class HumanInput(utils.EventEmitter[EventTypes]):
                     self.emit("vad_inference_done", ev)
                 elif ev.type == voice_activity_detection.VADEventType.END_OF_SPEECH:
                     self._speaking = False
+                    self.first_vad_speech = False
+                    log.pipeline("VAD SPEECH ENDED")
                     AppConfig().last_human_vad_speech_time = time.perf_counter()
                     self.emit("end_of_speech", ev)
 
