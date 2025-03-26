@@ -141,13 +141,13 @@ class AgentOutput:
         hyphenate_word: Callable[[str], list[str]],
     ) -> SynthesisHandle:
         log.pipeline("synthesizing speech")
-        log.pipeline("tts_source: %s", tts_source)
-        log.pipeline("transcript_source: %s", transcript_source)
-        log.pipeline("transcription: %s", transcription)
-        log.pipeline("transcription_speed: %s", transcription_speed)
-        log.pipeline("sentence_tokenizer: %s", sentence_tokenizer)
-        log.pipeline("word_tokenizer: %s", word_tokenizer)
-        log.pipeline("hyphenate_word: %s", hyphenate_word)
+        log.pipeline(f"tts_source: {tts_source}")
+        log.pipeline(f"transcript_source: {transcript_source}")
+        log.pipeline(f"transcription: {transcription}")
+        log.pipeline(f"transcription_speed: {transcription_speed}")
+        log.pipeline(f"sentence_tokenizer: {sentence_tokenizer}")
+        log.pipeline(f"word_tokenizer: {word_tokenizer}")
+        log.pipeline(f"hyphenate_word: {hyphenate_word}")
 
         def _before_forward(
             fwd: agent_transcription.TTSSegmentsForwarder,
@@ -194,10 +194,10 @@ class AgentOutput:
             transcript_source = await transcript_source
 
         tts_stream: AsyncIterable[str] | None = None
-        log.pipeline("tts_source: %s", tts_source)
-        log.pipeline("type of tts_source: %s", type(tts_source))
-        log.pipeline("transcript_source: %s", transcript_source)
-        log.pipeline("type of transcript_source: %s", type(transcript_source))
+        log.pipeline(f"tts_source: {tts_source}")
+        log.pipeline(f"type of tts_source: {type(tts_source)}")
+        log.pipeline(f"transcript_source: {transcript_source}")
+        log.pipeline(f"type of transcript_source: {type(transcript_source)}")
         if isinstance(tts_source, str):
             # wrap in async iterator
             log.pipeline(f"wrapping tts_source in async iterator: {tts_source}")
