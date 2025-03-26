@@ -285,60 +285,79 @@ class AgentOutput:
 
                 await tts_stream.aclose()
 
-        tts_stream: text_to_speech.SynthesizeStream | None = None
-        read_tts_atask: asyncio.Task | None = None
-        read_transcript_atask: asyncio.Task | None = None
+        tts_stream = handle._tts.stream()
+        read_tts_atask = asyncio.create_task(_read_generated_audio_task(tts_stream))
+        read_transcript_atask = asyncio.create_task(
+            self._read_transcript_task(transcript_source, handle)
+        )
+        segments_ch = utils.aio.Chan[tokenize.WordStream]()
 
-        try:
-            word_stream = None  # Will create on first segment
-            async for seg in tts_source:
-                logger.info(f"segment: {seg}")
-                if tts_stream is None:
-                    logger.info("creating new tts stream")
-                    tts_stream = handle._tts.stream()
-                    word_stream = handle._tts._opts.word_tokenizer.stream()
-                    read_tts_atask = asyncio.create_task(
-                        _read_generated_audio_task(tts_stream)
-                    )
-                    read_transcript_atask = asyncio.create_task(
-                        self._read_transcript_task(transcript_source, handle)
-                    )
+        @utils.log_exceptions(logger=logger)
+        async def _tokenize_input():
+            """Tokenize text from tts_source to words"""
+            word_stream = None
+            try:
+                async for seg in tts_source:
+                    logger.info(f"segment: {seg}")
+                    if not seg.strip():
+                        continue
 
-                # Push to word tokenizer
-                logger.info(f"pushing text to word stream: {seg}")
-                word_stream.push_text(seg)
+                    if word_stream is None:
+                        # New segment
+                        logger.info("creating new word stream")
+                        word_stream = handle._tts._opts.word_tokenizer.stream()
+                        segments_ch.send_nowait(word_stream)
 
-                # Process tokens as they become available using the async iterator
-                token_processing_task = asyncio.create_task(
-                    self._process_tokens(word_stream, tts_stream)
-                )
-                self._tasks.add(token_processing_task)
-                token_processing_task.add_done_callback(self._tasks.remove)
+                    # Push to word tokenizer
+                    logger.info(f"pushing text to word stream: {seg}")
+                    word_stream.push_text(seg)
 
-            # End processing
-            if word_stream is not None:
-                word_stream.end_input()
+                # End processing
+                if word_stream is not None:
+                    logger.info(f"ending word stream")
+                    word_stream.end_input()
+            finally:
+                segments_ch.close()
+                if inspect.isasyncgen(tts_source):
+                    await tts_source.aclose()
 
-            if tts_stream is not None:
+        @utils.log_exceptions(logger=logger)
+        async def _process_segments():
+            """Process word streams and send tokens to TTS"""
+            try:
+                async for word_stream in segments_ch:
+                    logger.info(f"received word stream from segments channel")
+                    # Process tokens as they become available using the async iterator
+                    async for token in word_stream:
+                        logger.info(f"pushing token to tts: {token.token}")
+                        tts_stream.push_text(token.token)
+            finally:
                 logger.info("ending tts stream")
                 tts_stream.end_input()
-                assert read_transcript_atask and read_tts_atask
-                logger.info("waiting for read_tts_atask")
-                await read_tts_atask
-                logger.info("waiting for read_transcript_atask")
-                await read_transcript_atask
+
+        try:
+            tokenize_task = asyncio.create_task(_tokenize_input())
+            process_task = asyncio.create_task(_process_segments())
+
+            tasks = [tokenize_task, process_task, read_tts_atask, read_transcript_atask]
+
+            # Wait for all tasks or until interrupted
+            done, pending = await asyncio.wait(
+                tasks + [handle._interrupt_fut], return_when=asyncio.FIRST_COMPLETED
+            )
+
+            # If interrupted, cancel all tasks
+            if handle._interrupt_fut in done:
+                for task in pending:
+                    task.cancel()
+
+            # Wait for all tasks to complete
+            await asyncio.gather(*tasks, return_exceptions=True)
 
         finally:
-            if read_tts_atask is not None:
-                assert read_transcript_atask is not None
-                await utils.aio.gracefully_cancel(read_tts_atask, read_transcript_atask)
-
-            if inspect.isasyncgen(tts_source):
-                await tts_source.aclose()
-
-    @utils.log_exceptions(logger=logger)
-    async def _process_tokens(self, word_stream, tts_stream) -> None:
-        """Process tokens from word stream and send to TTS stream"""
-        async for token in word_stream:
-            logger.info(f"pushing token to tts: {token.token}")
-            tts_stream.push_text(token.token)
+            await utils.aio.gracefully_cancel(
+                read_tts_atask,
+                read_transcript_atask,
+                tokenize_task if "tokenize_task" in locals() else None,
+                process_task if "process_task" in locals() else None,
+            )
