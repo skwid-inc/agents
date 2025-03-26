@@ -200,7 +200,7 @@ class TTS(tts.TTS):
                 language="es",
             )
         elif "Carrollton" in text or "Dallas" in text:
-            logging.info("Carrollton or Dallas detected, setting speed to slowest")
+            logger.info("Carrollton or Dallas detected, setting speed to slowest")
             self.update_options(speed="slow")
         else:
             self.update_options(speed="normal")
