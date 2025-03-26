@@ -29,6 +29,7 @@ from urllib.parse import urlencode
 import aiohttp
 import numpy as np
 from app_config import AppConfig
+from custom_logger import log
 from livekit import rtc
 from livekit.agents import (
     DEFAULT_API_CONNECT_OPTIONS,
@@ -43,7 +44,6 @@ from livekit.agents.utils import AudioBuffer
 from .log import logger
 from ._utils import PeriodicCollector
 from .models import DeepgramLanguages, DeepgramModels
-from custom_logger import log
 
 BASE_URL = "https://api.deepgram.com/v1/listen"
 
