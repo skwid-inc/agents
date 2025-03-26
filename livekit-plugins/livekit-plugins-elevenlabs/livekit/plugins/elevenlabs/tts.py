@@ -40,8 +40,8 @@ from livekit.agents import (
     utils,
 )
 from scipy import signal
+from custom_logger import log
 
-from .log import logger
 from .models import TTSEncoding, TTSModels
 
 _DefaultEncoding: TTSEncoding = "mp3_44100"
@@ -148,7 +148,7 @@ class TTS(tts.TTS):
         )
 
         if model_id is not None:
-            logger.warning(
+            log.warning(
                 "model_id is deprecated and will be removed in 1.5.0, use model instead",
             )
             model = model_id
@@ -188,7 +188,7 @@ class TTS(tts.TTS):
         self._streams = weakref.WeakSet[SynthesizeStream]()
 
     async def _connect_ws(self) -> aiohttp.ClientWebSocketResponse:
-        logger.info("connecting new to 11labs ws")
+        log.tts("connecting new to 11labs ws")
         session = self._ensure_session()
         result = await asyncio.wait_for(
             session.ws_connect(
@@ -197,7 +197,7 @@ class TTS(tts.TTS):
             ),
             self._conn_options.timeout,
         )
-        logger.info(f"connected to 11labs ws: {result}")
+        log.tts(f"connected to 11labs ws: {result}")
         return result
 
     async def _close_ws(self, ws: aiohttp.ClientWebSocketResponse):
@@ -267,28 +267,26 @@ class TTS(tts.TTS):
     async def _play_presynthesized_audio(
         self, wav_path: str, event_ch, input_text: str
     ) -> None:
-        logger.info(f"Playing Presynthesized Audio: {input_text}")
+        log.tts(f"Playing Presynthesized Audio: {input_text}")
         request_id = utils.shortuuid()
 
         # Read the WAV file
         audio_array, file_sample_rate = sf.read(str(wav_path), dtype="int16")
 
-        logger.info(f"File sample rate: {file_sample_rate}")
-        logger.info(
+        log.tts(f"File sample rate: {file_sample_rate}")
+        log.tts(
             f"WAV file channels: {1 if audio_array.ndim == 1 else audio_array.shape[1]}"
         )
-        logger.info(f"Target sample rate: {self._opts.sample_rate}")
+        log.tts(f"Target sample rate: {self._opts.sample_rate}")
 
         # Convert stereo to mono if needed
         if audio_array.ndim == 2 and audio_array.shape[1] == 2:
-            logger.info("Converting stereo to mono")
+            log.tts("Converting stereo to mono")
             audio_array = audio_array.mean(axis=1)
 
         # Resample if needed
         if file_sample_rate != self._opts.sample_rate:
-            logger.info(
-                f"Resampling from {file_sample_rate} to {self._opts.sample_rate}"
-            )
+            log.tts(f"Resampling from {file_sample_rate} to {self._opts.sample_rate}")
             # Calculate number of samples for the target sample rate
             num_samples = int(
                 len(audio_array) * self._opts.sample_rate / file_sample_rate
@@ -322,7 +320,7 @@ class TTS(tts.TTS):
                 )
             )
 
-        logger.info(f"Sent Presynthesized Audio to event channel")
+        log.tts(f"Sent Presynthesized Audio to event channel")
         return
 
 
@@ -368,7 +366,7 @@ class ChunkedStream(tts.ChunkedStream):
             ) as resp:
                 if not resp.content_type.startswith("audio/"):
                     content = await resp.text()
-                    logger.error("11labs returned non-audio data: %s", content)
+                    log.error("11labs returned non-audio data: %s", content)
                     return
 
                 async def _decode_loop():
@@ -417,24 +415,24 @@ class SynthesizeStream(tts.SynthesizeStream):
         self._opts, self._pool = opts, pool
 
     async def _run(self) -> None:
-        logger.info("running SynthesizeStream")
+        log.tts("running SynthesizeStream")
         request_id = utils.shortuuid()
         self._segments_ch = utils.aio.Chan[tokenize.WordStream]()
 
-        @utils.log_exceptions(logger=logger)
+        @utils.log_exceptions(logger=log)
         async def _tokenize_input():
             """tokenize text from the input_ch to words"""
             word_stream = None
             # have_content = False
             async for input in self._input_ch:
-                logger.info(f"received input: ~{input}~")
+                log.tts(f"received input: ~{input}~")
                 if isinstance(input, str):
                     # if input.strip():
-                        # have_content = True
+                    # have_content = True
                     # Check for filler phrases
                     filler_phrase_wav = get_wav_if_available(input)
                     if filler_phrase_wav:
-                        logger.info(f"Playing presynthesized audio for: {input}")
+                        log.tts(f"Playing presynthesized audio for: {input}")
                         await self._tts._play_presynthesized_audio(
                             filler_phrase_wav, self._event_ch, input
                         )
@@ -446,30 +444,36 @@ class SynthesizeStream(tts.SynthesizeStream):
                     if word_stream is None:
                         # new segment (after flush for e.g)
                         word_stream = self._opts.word_tokenizer.stream()
-                        logger.info(f"sending word stream to segments ch: {word_stream} (id: {id(word_stream)})")
+                        log.tts(
+                            f"sending word stream to segments ch: {word_stream} (id: {id(word_stream)})"
+                        )
                         self._segments_ch.send_nowait(word_stream)
                         word_stream.push_text("")
-                    logger.info(f"pushing text to word stream {id(word_stream)}: ~{input}~")
+                    log.tts(f"pushing text to word stream {id(word_stream)}: ~{input}~")
                     word_stream.push_text(input)
                 elif isinstance(input, self._FlushSentinel):
-                    logger.info(f"received flush sentinel for word stream {id(word_stream)}: ~{word_stream}~")
+                    log.tts(
+                        f"received flush sentinel for word stream {id(word_stream)}: ~{word_stream}~"
+                    )
                     if word_stream is not None:
-                        logger.info(f"ending word stream {id(word_stream)}")
+                        log.tts(f"ending word stream {id(word_stream)}")
                         word_stream.end_input()
-                        logger.info(f"ended word stream {id(word_stream)}")
+                        log.tts(f"ended word stream {id(word_stream)}")
                     word_stream = None
             if word_stream is not None:
-                logger.info(f"ending word stream {id(word_stream)}")
+                log.tts(f"ending word stream {id(word_stream)}")
                 word_stream.end_input()
-                logger.info(f"ended word stream {id(word_stream)}")
+                log.tts(f"ended word stream {id(word_stream)}")
             self._segments_ch.close()
 
-        @utils.log_exceptions(logger=logger)
+        @utils.log_exceptions(logger=log)
         async def _process_segments():
             async for word_stream in self._segments_ch:
-                logger.info(f"received word stream from segments ch ({self._segments_ch}): {word_stream}")
+                log.tts(
+                    f"received word stream from segments ch ({self._segments_ch}): {word_stream}"
+                )
                 await self._run_ws(word_stream, request_id)
-                logger.info(f"finished running ws for word stream: {word_stream}")
+                log.tts(f"finished running ws for word stream: {word_stream}")
 
         tasks = [
             asyncio.create_task(_tokenize_input()),
@@ -496,9 +500,9 @@ class SynthesizeStream(tts.SynthesizeStream):
         word_stream: tokenize.WordStream,
         request_id: str,
     ) -> None:
-        logger.info(f"running ws for word stream: {word_stream}")
+        log.tts(f"running ws for word stream: {word_stream}")
         async with self._pool.connection() as ws_conn:
-            logger.info(f"got connection: {ws_conn}")
+            log.tts(f"got connection: {ws_conn}")
             segment_id = utils.shortuuid()
             expected_text = ""  # accumulate all tokens sent
 
@@ -519,18 +523,20 @@ class SynthesizeStream(tts.SynthesizeStream):
                     chunk_length_schedule=self._opts.chunk_length_schedule
                 ),
             )
-            logger.info(f"sending init packet: {init_pkt}")
+            log.tts(f"sending init packet: {init_pkt}")
             await ws_conn.send_str(json.dumps(init_pkt))
 
             eos_sent = False
 
-            @utils.log_exceptions(logger=logger)
+            @utils.log_exceptions(logger=log)
             async def send_task():
                 nonlocal expected_text, eos_sent
                 xml_content = []
                 async for data in word_stream:
                     text = data.token
-                    logger.info(f"Current expected text: {expected_text}, text: {text} from {id(word_stream)}")
+                    log.tts(
+                        f"Current expected text: {expected_text}, text: {text} from {id(word_stream)}"
+                    )
                     expected_text += text
                     # send the xml phoneme in one go
                     if (
@@ -547,7 +553,7 @@ class SynthesizeStream(tts.SynthesizeStream):
 
                     data_pkt = dict(text=f"{text} ")  # must always end with a space
                     self._mark_started()
-                    logger.info(f"send_task: sending text: ~{text}~")
+                    log.tts(f"send_task: sending text: ~{text}~")
                     await ws_conn.send_str(json.dumps(data_pkt))
                     if any(char in text.strip() for char in [".", "!", "?"]):
                         if (
@@ -558,28 +564,28 @@ class SynthesizeStream(tts.SynthesizeStream):
                             AppConfig().get_call_metadata().update(
                                 {"first_sentence_synthesis_start_time": time.time()}
                             )
-                        logger.info(
+                        log.tts(
                             "Sending flush packet due to sentence ending punctuation"
                         )
                         AppConfig().tts_flush_request_timestamp = time.perf_counter()
                         await ws_conn.send_str(json.dumps({"text": " ", "flush": True}))
                 if xml_content:
-                    logger.warning("11labs stream ended with incomplete xml content")
-                logger.info("ending 11labs stream")
+                    log.warning("11labs stream ended with incomplete xml content")
+                log.tts("ending 11labs stream")
                 # eos_sent = True
                 await ws_conn.send_str(json.dumps({"text": " ", "flush": True}))
 
             # receives from ws and decodes audio
-            @utils.log_exceptions(logger=logger)
+            @utils.log_exceptions(logger=log)
             async def recv_task():
                 nonlocal expected_text, eos_sent
 
                 received_text = ""
                 received_first_data_packet = False
                 while True:
-                    logger.info(f"waiting for message from {id(word_stream)}")
+                    log.tts(f"waiting for message from {id(word_stream)}")
                     msg = await ws_conn.receive()
-                    logger.info(f"received message from {id(word_stream)}: {msg.type}")
+                    log.tts(f"received message from {id(word_stream)}: {msg.type}")
                     if msg.type in (
                         aiohttp.WSMsgType.CLOSED,
                         aiohttp.WSMsgType.CLOSE,
@@ -591,21 +597,30 @@ class SynthesizeStream(tts.SynthesizeStream):
                                 request_id=request_id,
                             )
                         else:
-                            logger.info("11labs connection closed as expected")
+                            log.error(
+                                "11labs connection closed as expected",
+                                categories=["TTS"],
+                            )
                             break
 
                     if msg.type != aiohttp.WSMsgType.TEXT:
-                        logger.warning("unexpected 11labs message type %s", msg.type)
+                        log.warning(
+                            f"unexpected 11labs message type {msg.type}",
+                            categories=["TTS"],
+                        )
                         continue
 
                     data = json.loads(msg.data)
                     if not received_first_data_packet:
                         received_first_data_packet = True
-                        AppConfig().tts_first_data_packet_timestamp = time.perf_counter()
+                        AppConfig().tts_first_data_packet_timestamp = (
+                            time.perf_counter()
+                        )
+                        log.tts("received first data packet")
                     if data.get("audio"):
                         received_text_to_print = ""
                         audio = data.pop("audio")
-                        logger.info(f"received audio data: {data}")
+                        log.verbose(f"received audio data: {data}", categories=["TTS"])
                         data["audio"] = audio
                         if alignment := data.get("normalizedAlignment"):
                             # Add character timing data to the forwarder
@@ -614,16 +629,15 @@ class SynthesizeStream(tts.SynthesizeStream):
                             chars = alignment.get("chars", [])
                             durations = alignment.get("charDurationsMs", [])
                             AppConfig().playout_buffer += "".join(chars)
-                            logger.info(
-                                f"just added to playout_buffer, current={AppConfig().playout_buffer}"
+                            log.verbose(
+                                f"just added to playout_buffer, current={AppConfig().playout_buffer}",
+                                categories=["TTS"],
                             )
                             AppConfig().char_timings.extend(durations)
 
-                            received_text_to_print = "".join(
-                                alignment.get("chars", [])
-                            ).replace(" ", "")
-                            logger.info(
-                                f"recv_task: received text: {received_text_to_print}"
+                            received_text_to_print = "".join(alignment.get("chars", []))
+                            log.tts(
+                                f"recv_task: received text so far: {received_text_to_print}"
                             )
                         b64data = base64.b64decode(data["audio"])
 
@@ -639,11 +653,11 @@ class SynthesizeStream(tts.SynthesizeStream):
                             segment_id=segment_id,
                         )
 
-                        logger.info(
+                        log.tts(
                             f"recv_task: pushing data to decoder for text: {received_text_to_print}"
                         )
                         chunk_decoder.push(b64data)
-                        logger.info(
+                        log.tts(
                             f"recv_task: ending input for text: {received_text_to_print}"
                         )
                         chunk_decoder.end_input()
@@ -651,31 +665,33 @@ class SynthesizeStream(tts.SynthesizeStream):
                         frame_count = 0
                         async for frame in chunk_decoder:
                             frame_count += 1
-                            logger.info(
-                                f"recv_task: pushing frame {frame_count} to emitter for text: {received_text_to_print}"
-                            )
+                            # only log the first frame to avoid spamming the logs
+                            if frame_count > 1:
+                                log.verbose(
+                                    f"recv_task: pushing frame {frame_count} to emitter for text: {received_text_to_print}",
+                                    categories=["TTS"],
+                                )
+                            else:
+                                log.tts(
+                                    f"recv_task: pushing frame {frame_count} to emitter for text: {received_text_to_print}"
+                                )
                             emitter.push(frame)
 
-                        logger.info(
+                        log.tts(
                             f"recv_task: flushing emitter for text: {received_text_to_print}"
                         )
                         emitter.flush()
-                        logger.info(
+                        log.tts(
                             f"recv_task: closing decoder for text: {received_text_to_print}"
                         )
                         await chunk_decoder.aclose()
 
                         if alignment := data.get("normalizedAlignment"):
-                            received_text += "".join(
-                                alignment.get("chars", [])
-                            ).replace(" ", "")
-                            expected_text_without_spaces = expected_text.replace(
-                                " ", ""
+                            received_text += "".join(alignment.get("chars", []))
+                            log.tts(
+                                f"recv_task: received text: {received_text}\n\nexpected_text: {expected_text}"
                             )
-                            logger.info(
-                                f"recv_task: received text: {received_text}\n\nexpected_text_without_spaces: {expected_text_without_spaces}"
-                            )
-                            logger.info(
+                            log.tts(
                                 f"recv_task: safe_for_tts_to_break: {
                                     AppConfig()
                                     .get_call_metadata()
@@ -683,14 +699,14 @@ class SynthesizeStream(tts.SynthesizeStream):
                                 }"
                             )
                             if (
-                                received_text == expected_text_without_spaces
+                                received_text == expected_text
                                 # and AppConfig()
                                 # .get_call_metadata()
                                 # .get("safe_for_tts_to_break", "saikrishna")[:5]
                                 # in received_text
                             ):
                                 # decoder.end_input()
-                                logger.info(
+                                log.tts(
                                     f"recv_task: about to break due to received text == expected text: {expected_text}"
                                 )
                                 AppConfig().get_call_metadata().pop(
@@ -705,7 +721,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                             body=None,
                         )
                     elif data.get("isFinal"):
-                        logger.info("11labs stream ended as expected")
+                        log.tts("11labs stream ended as expected")
                         break
                     else:
                         raise APIStatusError(
@@ -714,7 +730,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                             request_id=request_id,
                             body=None,
                         )
-                logger.info(f"recv_task completed from {id(word_stream)}")
+                log.tts(f"recv_task completed from {id(word_stream)}")
 
             tasks = [
                 asyncio.create_task(send_task()),
@@ -723,7 +739,7 @@ class SynthesizeStream(tts.SynthesizeStream):
             ]
             try:
                 await asyncio.gather(*tasks)
-                logger.info(f"all tasks completed from {id(word_stream)}")
+                log.tts(f"all tasks completed from {id(word_stream)}")
             except asyncio.TimeoutError as e:
                 raise APITimeoutError() from e
             except aiohttp.ClientResponseError as e:
@@ -738,9 +754,9 @@ class SynthesizeStream(tts.SynthesizeStream):
             except Exception as e:
                 raise APIConnectionError() from e
             finally:
-                logger.info(f"gracefully canceling tasks from {id(word_stream)}")
+                log.tts(f"gracefully canceling tasks from {id(word_stream)}")
                 await utils.aio.gracefully_cancel(*tasks)
-                logger.info(f"tasks cancelled from {id(word_stream)}")
+                log.tts(f"tasks cancelled from {id(word_stream)}")
                 # await decoder.aclose()
 
 
