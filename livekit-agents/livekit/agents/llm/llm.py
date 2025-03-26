@@ -2,19 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from types import TracebackType
-from typing import (
-    Any,
-    AsyncIterable,
-    AsyncIterator,
-    Generic,
-    Literal,
-    TypeVar,
-    Union,
-)
+from typing import Any, AsyncIterable, AsyncIterator, Generic, Literal, TypeVar, Union
 
+from app_config import AppConfig
 from livekit import rtc
 from livekit.agents._exceptions import APIConnectionError, APIError
 
@@ -99,8 +93,9 @@ class LLM(
         temperature: float | None = None,
         n: int | None = None,
         parallel_tool_calls: bool | None = None,
-        tool_choice: Union[ToolChoice, Literal["auto", "required", "none"]]
-        | None = None,
+        tool_choice: (
+            Union[ToolChoice, Literal["auto", "required", "none"]] | None
+        ) = None,
     ) -> "LLMStream": ...
 
     @property
@@ -141,8 +136,20 @@ class LLMStream(ABC):
             self._metrics_monitor_task(monitor_aiter), name="LLM._metrics_task"
         )
 
+        llm_stream_task_id = f"LLMStream-{str(uuid.uuid4())}"
+        pending_tasks = (
+            AppConfig().get_call_metadata().setdefault("pending_livekit_tasks", {})
+        )
+        pending_tasks[llm_stream_task_id] = time.time()
         self._task = asyncio.create_task(self._main_task())
+
         self._task.add_done_callback(lambda _: self._event_ch.close())
+
+        def _post_task_callback(_) -> None:
+            logger.info(f"Task completed: {llm_stream_task_id}")
+            pending_tasks.pop(llm_stream_task_id, None)
+
+        self._task.add_done_callback(_post_task_callback)
 
         self._function_calls_info: list[function_context.FunctionCallInfo] = []
         self._function_tasks = set[asyncio.Task[Any]]()
