@@ -721,9 +721,8 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
         )
 
         agent_reply_task_id = f"AgentReply-{str(uuid.uuid4())}"
-        pending_tasks = (
-            AppConfig().get_call_metadata().setdefault("pending_livekit_tasks", {})
-        )
+        logger.info(f"Starting task: {agent_reply_task_id}")
+        pending_tasks = AppConfig().get_call_metadata().get("pending_livekit_tasks", {})
         pending_tasks[agent_reply_task_id] = time.time()
         self._agent_reply_task = asyncio.create_task(
             self._synthesize_answer_task(self._agent_reply_task, new_handle)
@@ -793,6 +792,9 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
                     self._transcribed_text = self._transcribed_text[
                         len(handle.user_question) :
                     ]
+                logger.info(
+                    "Cancelling handle due to user not wanting to synthesize an answer"
+                )
                 handle.cancel()
                 return
 
@@ -801,6 +803,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
                 llm_stream = _default_before_llm_cb(self, chat_ctx=copied_ctx)
 
             if handle.interrupted:
+                logger.info("Returning early due to handle.interrupted")
                 return
 
             synthesis_handle = self._synthesize_agent_speech(handle.id, llm_stream)
@@ -1107,9 +1110,9 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
                 return
 
             assert isinstance(speech_handle.source, LLMStream)
-            assert (
-                not user_question or speech_handle.user_committed
-            ), "user speech should have been committed before using tools"
+            assert not user_question or speech_handle.user_committed, (
+                "user speech should have been committed before using tools"
+            )
 
             llm_stream = speech_handle.source
 
@@ -1235,9 +1238,9 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
         speech_id: str,
         source: str | LLMStream | AsyncIterable[str],
     ) -> SynthesisHandle:
-        assert (
-            self._agent_output is not None
-        ), "agent output should be initialized when ready"
+        assert self._agent_output is not None, (
+            "agent output should be initialized when ready"
+        )
 
         tk = SpeechDataContextVar.set(SpeechData(speech_id))
 
@@ -1350,8 +1353,8 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
 
         # due to timing, we could end up with two pushed agent replies inside the speech queue.
         # so make sure we directly interrupt every reply when validating a new one
-        if self._should_interrupt():
-            self.interrupt()
+        # if self._should_interrupt():
+        #     self.interrupt()
 
         logger.debug(
             "validated agent reply",
