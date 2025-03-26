@@ -6,6 +6,7 @@ from typing import AsyncIterable
 from .. import utils
 from ..llm import ChatMessage, LLMStream
 from .agent_output import SynthesisHandle
+from .log import logger
 
 
 class SpeechHandle:
@@ -180,6 +181,17 @@ class SpeechHandle:
 
     @property
     def interrupted(self) -> bool:
+        logger.info(f"self._init_fut.cancelled(): {self._init_fut.cancelled()}")
+        logger.info(
+            f"self._synthesis_handle is not None: {self._synthesis_handle is not None}"
+        )
+        if self._synthesis_handle is not None:
+            logger.info(
+                f"self._synthesis_handle.interrupted: {self._synthesis_handle.interrupted}"
+            )
+        else:
+            logger.info("self._synthesis_handle is None")
+
         return self._init_fut.cancelled() or (
             self._synthesis_handle is not None and self._synthesis_handle.interrupted
         )
@@ -199,11 +211,14 @@ class SpeechHandle:
         self._init_fut.cancel()
 
         if isinstance(self._source, LLMStream) and self._source._task is not None:
+            logger.info("Cancelling LLMStream task")
             self._source._task.cancel()
         elif isinstance(self._source, AsyncIterable):
+            logger.info("Closing AsyncIterable")
             self._source.aclose()
 
         if self._synthesis_handle is not None:
+            logger.info("Interrupting SynthesisHandle")
             self._synthesis_handle.interrupt()
 
         if cancel_nested:
