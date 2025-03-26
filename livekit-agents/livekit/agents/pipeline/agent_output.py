@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from typing import Any, AsyncIterable, Awaitable, Callable, Union
 import re
+from typing import Any, AsyncIterable, Awaitable, Callable, Union
 
 from app_config import AppConfig
 from livekit import rtc
 
-from .. import llm, tokenize, utils
+from .. import llm, tokenize
 from .. import transcription as agent_transcription
 from .. import tts as text_to_speech
+from .. import utils
 from .agent_playout import AgentPlayout, PlayoutHandle
 from custom_logger import log
 
@@ -284,14 +285,16 @@ class AgentOutput:
 
                 buffer += seg
 
-                # Don't flush if we have decimal point at the end of $XXXX
-                potential_incomplete_currency = re.search(
-                    r"\$[\d,]+\.?$|\$\d*$", buffer
+                # Inside your loop where you decide to flush:
+                skip_flush_pattern = re.compile(
+                    r"(?:\$[\d,]+\.?\d*%?$|\d+\.\d*%?$)"  # optional dollar sign + decimal + optional % OR just decimal + optional %
                 )
+
+                potential_incomplete_number = skip_flush_pattern.search(buffer)
 
                 if (
                     re.search(r"[.!?](?!\d)", buffer)
-                    and not potential_incomplete_currency
+                    and not potential_incomplete_number
                 ):
                     log.pipeline(f"flushing tts stream with buffer: {buffer}")
                     tts_stream.flush()
