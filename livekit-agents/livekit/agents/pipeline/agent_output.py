@@ -12,7 +12,7 @@ from .. import llm, tokenize, utils
 from .. import transcription as agent_transcription
 from .. import tts as text_to_speech
 from .agent_playout import AgentPlayout, PlayoutHandle
-from .log import logger
+from custom_logger import log
 
 SpeechSource = Union[AsyncIterable[str], str, Awaitable[str]]
 
@@ -81,11 +81,11 @@ class SynthesisHandle:
         if self.interrupted:
             return
 
-        logger.debug(
+        log.pipeline(
             "agent interrupted",
             extra={"speech_id": self.speech_id},
         )
-        logger.info(f"AGENT INTERRUPTED TEXT: {self.tts_forwarder.played_text}")
+        log.pipeline(f"AGENT INTERRUPTED TEXT: {self.tts_forwarder.played_text}")
         if (
             self.tts_forwarder.played_text
             and self.tts_forwarder.played_text.strip() != ""
@@ -139,14 +139,15 @@ class AgentOutput:
         word_tokenizer: tokenize.WordTokenizer,
         hyphenate_word: Callable[[str], list[str]],
     ) -> SynthesisHandle:
-        logger.info("synthesizing speech")
-        logger.info("tts_source: %s", tts_source)
-        logger.info("transcript_source: %s", transcript_source)
-        logger.info("transcription: %s", transcription)
-        logger.info("transcription_speed: %s", transcription_speed)
-        logger.info("sentence_tokenizer: %s", sentence_tokenizer)
-        logger.info("word_tokenizer: %s", word_tokenizer)
-        logger.info("hyphenate_word: %s", hyphenate_word)
+        log.pipeline("synthesizing speech")
+        log.pipeline("tts_source: %s", tts_source)
+        log.pipeline("transcript_source: %s", transcript_source)
+        log.pipeline("transcription: %s", transcription)
+        log.pipeline("transcription_speed: %s", transcription_speed)
+        log.pipeline("sentence_tokenizer: %s", sentence_tokenizer)
+        log.pipeline("word_tokenizer: %s", word_tokenizer)
+        log.pipeline("hyphenate_word: %s", hyphenate_word)
+
         def _before_forward(
             fwd: agent_transcription.TTSSegmentsForwarder,
             rtc_transcription: rtc.Transcription,
@@ -180,7 +181,7 @@ class AgentOutput:
         task.add_done_callback(self._tasks.remove)
         return handle
 
-    @utils.log_exceptions(logger=logger)
+    @utils.log_exceptions(logger=log)
     async def _synthesize_task(self, handle: SynthesisHandle) -> None:
         """Synthesize speech from the source"""
         tts_source = handle._tts_source
@@ -192,13 +193,14 @@ class AgentOutput:
             transcript_source = await transcript_source
 
         tts_stream: AsyncIterable[str] | None = None
-        logger.info("tts_source: %s", tts_source)
-        logger.info("type of tts_source: %s", type(tts_source))
-        logger.info("transcript_source: %s", transcript_source)
-        logger.info("type of transcript_source: %s", type(transcript_source))
+        log.pipeline("tts_source: %s", tts_source)
+        log.pipeline("type of tts_source: %s", type(tts_source))
+        log.pipeline("transcript_source: %s", transcript_source)
+        log.pipeline("type of transcript_source: %s", type(transcript_source))
         if isinstance(tts_source, str):
             # wrap in async iterator
-            logger.info(f"wrapping tts_source in async iterator: {tts_source}")
+            log.pipeline(f"wrapping tts_source in async iterator: {tts_source}")
+
             async def string_to_stream(text: str):
                 yield text
 
@@ -216,7 +218,7 @@ class AgentOutput:
         finally:
             await utils.aio.gracefully_cancel(synth)
 
-    @utils.log_exceptions(logger=logger)
+    @utils.log_exceptions(logger=log)
     async def _read_transcript_task(
         self, transcript_source: AsyncIterable[str] | str, handle: SynthesisHandle
     ) -> None:
@@ -234,7 +236,7 @@ class AgentOutput:
             if inspect.isasyncgen(transcript_source):
                 await transcript_source.aclose()
 
-    @utils.log_exceptions(logger=logger)
+    @utils.log_exceptions(logger=log)
     async def _stream_synthesis_task(
         self,
         tts_source: AsyncIterable[str],
@@ -243,7 +245,7 @@ class AgentOutput:
     ) -> None:
         """synthesize speech from streamed text"""
 
-        @utils.log_exceptions(logger=logger)
+        @utils.log_exceptions(logger=log)
         async def _read_generated_audio_task(
             tts_stream: text_to_speech.SynthesizeStream,
         ) -> None:
@@ -266,9 +268,9 @@ class AgentOutput:
         try:
             buffer = ""  # Intermediary buffer to track text for flushing
             async for seg in tts_source:
-                logger.info(f"segment: {seg}")
+                log.pipeline(f"segment: {seg}")
                 if tts_stream is None:
-                    logger.info("creating new tts stream")
+                    log.pipeline("creating new tts stream")
                     tts_stream = handle._tts.stream()
                     read_tts_atask = asyncio.create_task(
                         _read_generated_audio_task(tts_stream)
@@ -277,26 +279,31 @@ class AgentOutput:
                         self._read_transcript_task(transcript_source, handle)
                     )
 
-                logger.info(f"pushing text: {seg}")
+                log.pipeline(f"pushing text: {seg}")
                 tts_stream.push_text(seg)
-                
+
                 buffer += seg
-                
-                #Don't flush if we have decimal point at the end of $XXXX
-                potential_incomplete_currency = re.search(r'\$[\d,]+\.?$|\$\d*$', buffer)
-                
-                if re.search(r'[.!?](?!\d)', buffer) and not potential_incomplete_currency:
-                    logger.info(f"flushing tts stream with buffer: {buffer}")
+
+                # Don't flush if we have decimal point at the end of $XXXX
+                potential_incomplete_currency = re.search(
+                    r"\$[\d,]+\.?$|\$\d*$", buffer
+                )
+
+                if (
+                    re.search(r"[.!?](?!\d)", buffer)
+                    and not potential_incomplete_currency
+                ):
+                    log.pipeline(f"flushing tts stream with buffer: {buffer}")
                     tts_stream.flush()
                     buffer = ""
 
             if tts_stream is not None:
-                logger.info("ending tts stream")
+                log.pipeline("ending tts stream")
                 tts_stream.end_input()
                 assert read_transcript_atask and read_tts_atask
-                logger.info("waiting for read_tts_atask")
+                log.pipeline("waiting for read_tts_atask")
                 await read_tts_atask
-                logger.info("waiting for read_transcript_atask")
+                log.pipeline("waiting for read_transcript_atask")
                 await read_transcript_atask
 
         finally:
