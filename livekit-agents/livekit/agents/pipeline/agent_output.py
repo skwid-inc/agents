@@ -47,6 +47,7 @@ class SynthesisHandle:
         self._play_handle: PlayoutHandle | None = None
         self._interrupt_fut = asyncio.Future[None]()
         self._speech_id = speech_id
+        self._segments_ch = utils.aio.Chan[tokenize.WordStream]()
 
     @property
     def speech_id(self) -> str:
@@ -289,27 +290,16 @@ class AgentOutput:
         read_transcript_atask: asyncio.Task | None = None
 
         try:
-            buffer = ""  # Intermediary buffer to track text for flushing
+            word_stream = None  # Will create on first segment
             async for seg in tts_source:
                 logger.info(f"segment: {seg}")
                 if tts_stream is None:
                     logger.info("creating new tts stream")
                     tts_stream = handle._tts.stream()
-                    read_tts_atask_id = f"ReadTTS-{str(uuid.uuid4())}"
-                    logger.info(f"Starting task: {read_tts_atask_id}")
-                    pending_tasks = (
-                        AppConfig().get_call_metadata().get("pending_livekit_tasks", {})
-                    )
-                    pending_tasks[read_tts_atask_id] = time.time()
+                    word_stream = handle._tts._opts.word_tokenizer.stream()
                     read_tts_atask = asyncio.create_task(
                         _read_generated_audio_task(tts_stream)
                     )
-
-                    def _post_task_callback_1(_) -> None:
-                        logger.info(f"Task completed: {read_tts_atask_id}")
-                        pending_tasks.pop(read_tts_atask_id, None)
-
-                    read_tts_atask.add_done_callback(_post_task_callback_1)
 
                     read_transcript_atask_id = f"ReadTranscript-{str(uuid.uuid4())}"
                     logger.info(f"Starting task: {read_transcript_atask_id}")
@@ -322,31 +312,24 @@ class AgentOutput:
                         self._read_transcript_task(transcript_source, handle)
                     )
 
-                    def _post_task_callback_2(_) -> None:
-                        logger.info(f"Task completed: {read_transcript_atask_id}")
-                        pending_tasks.pop(read_transcript_atask_id, None)
+                # Push to word tokenizer instead of directly to TTS
+                logger.info(f"pushing text to word stream: {seg}")
+                word_stream.push_text(seg)
 
-                    read_transcript_atask.add_done_callback(_post_task_callback_2)
+                # Process each token from the word stream immediately
+                while True:
+                    token = await word_stream.get_next_token_nowait()
+                    if token is None:
+                        break
+                    logger.info(f"pushing token to tts: {token.token}")
+                    tts_stream.push_text(token.token)
 
-                logger.info(f"pushing text: {seg}")
-                tts_stream.push_text(seg)
-
-                buffer += seg
-
-                # Inside your loop where you decide to flush:
-                skip_flush_pattern = re.compile(
-                    r"(?:\$[\d,]+\.?\d*%?$|\d+\.\d*%?$)"  # optional dollar sign + decimal + optional % OR just decimal + optional %
-                )
-
-                potential_incomplete_number = skip_flush_pattern.search(buffer)
-
-                if (
-                    re.search(r"[.!?](?!\d)", buffer)
-                    and not potential_incomplete_number
-                ):
-                    logger.info(f"flushing tts stream with buffer: {buffer}")
-                    tts_stream.flush()
-                    buffer = ""
+            # End processing
+            if word_stream is not None:
+                word_stream.end_input()
+                # Process any remaining tokens
+                async for token in word_stream:
+                    tts_stream.push_text(token.token)
 
             if tts_stream is not None:
                 logger.info("ending tts stream")

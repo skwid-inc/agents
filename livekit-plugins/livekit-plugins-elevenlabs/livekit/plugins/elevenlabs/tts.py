@@ -419,60 +419,17 @@ class SynthesizeStream(tts.SynthesizeStream):
     async def _run(self) -> None:
         logger.info("running SynthesizeStream")
         request_id = utils.shortuuid()
-        self._segments_ch = utils.aio.Chan[tokenize.WordStream]()
-
-        @utils.log_exceptions(logger=logger)
-        async def _tokenize_input():
-            """tokenize text from the input_ch to words"""
-            word_stream = None
-            # have_content = False
-            async for input in self._input_ch:
-                logger.info(f"received input: ~{input}~")
-                if isinstance(input, str):
-                    # if input.strip():
-                        # have_content = True
-                    # Check for filler phrases
-                    filler_phrase_wav = get_wav_if_available(input)
-                    if filler_phrase_wav:
-                        logger.info(f"Playing presynthesized audio for: {input}")
-                        await self._tts._play_presynthesized_audio(
-                            filler_phrase_wav, self._event_ch, input
-                        )
-                        continue
-
-                    if not input.strip():
-                        continue
-
-                    if word_stream is None:
-                        # new segment (after flush for e.g)
-                        word_stream = self._opts.word_tokenizer.stream()
-                        logger.info(f"sending word stream to segments ch: {word_stream} (id: {id(word_stream)})")
-                        self._segments_ch.send_nowait(word_stream)
-                        word_stream.push_text("")
-                    logger.info(f"pushing text to word stream {id(word_stream)}: ~{input}~")
-                    word_stream.push_text(input)
-                elif isinstance(input, self._FlushSentinel):
-                    logger.info(f"received flush sentinel for word stream {id(word_stream)}: ~{word_stream}~")
-                    if word_stream is not None:
-                        logger.info(f"ending word stream {id(word_stream)}")
-                        word_stream.end_input()
-                        logger.info(f"ended word stream {id(word_stream)}")
-                    word_stream = None
-            if word_stream is not None:
-                logger.info(f"ending word stream {id(word_stream)}")
-                word_stream.end_input()
-                logger.info(f"ended word stream {id(word_stream)}")
-            self._segments_ch.close()
 
         @utils.log_exceptions(logger=logger)
         async def _process_segments():
-            async for word_stream in self._segments_ch:
-                logger.info(f"received word stream from segments ch ({self._segments_ch}): {word_stream}")
+            async for word_stream in self._input_ch:
+                logger.info(
+                    f"received word stream from segments ch ({self._segments_ch}): {word_stream}"
+                )
                 await self._run_ws(word_stream, request_id)
                 logger.info(f"finished running ws for word stream: {word_stream}")
 
         tasks = [
-            asyncio.create_task(_tokenize_input()),
             asyncio.create_task(_process_segments()),
         ]
         try:
@@ -530,7 +487,9 @@ class SynthesizeStream(tts.SynthesizeStream):
                 xml_content = []
                 async for data in word_stream:
                     text = data.token
-                    logger.info(f"Current expected text: {expected_text}, text: {text} from {id(word_stream)}")
+                    logger.info(
+                        f"Current expected text: {expected_text}, text: {text} from {id(word_stream)}"
+                    )
                     expected_text += text
                     # send the xml phoneme in one go
                     if (
@@ -601,7 +560,9 @@ class SynthesizeStream(tts.SynthesizeStream):
                     data = json.loads(msg.data)
                     if not received_first_data_packet:
                         received_first_data_packet = True
-                        AppConfig().tts_first_data_packet_timestamp = time.perf_counter()
+                        AppConfig().tts_first_data_packet_timestamp = (
+                            time.perf_counter()
+                        )
                     if data.get("audio"):
                         received_text_to_print = ""
                         audio = data.pop("audio")
