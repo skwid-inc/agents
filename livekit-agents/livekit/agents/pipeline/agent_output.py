@@ -15,6 +15,7 @@ from .. import transcription as agent_transcription
 from .. import tts as text_to_speech
 from .agent_playout import AgentPlayout, PlayoutHandle
 from custom_logger import log
+from custom_tokenize import StreamFlusher
 
 SpeechSource = Union[AsyncIterable[str], str, Awaitable[str]]
 
@@ -289,12 +290,13 @@ class AgentOutput:
         read_transcript_atask: asyncio.Task | None = None
 
         try:
-            buffer = ""  # Intermediary buffer to track text for flushing
             async for seg in tts_source:
                 log.pipeline(f"segment: {seg}")
                 if tts_stream is None:
                     log.pipeline("creating new tts stream")
                     tts_stream = handle._tts.stream()
+                    flusher = StreamFlusher(tts_stream)
+
                     read_tts_atask_id = f"ReadTTS-{str(uuid.uuid4())}"
                     log.verbose(f"Starting task: {read_tts_atask_id}")
                     pending_tasks = (
@@ -327,29 +329,11 @@ class AgentOutput:
                         pending_tasks.pop(read_transcript_atask_id, None)
 
                     read_transcript_atask.add_done_callback(_post_task_callback_2)
+                
+                log.pipeline(f"Agent Output seg: {seg}")
 
-                log.verbose(f"pushing text: {seg}")
-                tts_stream.push_text(seg)
+                flusher.push_text(seg)
 
-                buffer += seg
-
-                # Inside your loop where you decide to flush:
-                skip_flush_pattern = re.compile(
-                    r"(?:\$[\d,]+\.?\d*%?$|\d+\.\d*%?$)"  # optional dollar sign + decimal + optional % OR just decimal + optional %
-                )
-
-                potential_incomplete_number = skip_flush_pattern.search(buffer)
-
-                if (
-                    re.search(r"[.!?](?!\d)", buffer)
-                    and not potential_incomplete_number
-                ):
-                    log.verbose(
-                        f"flushing tts stream with buffer: {buffer}",
-                        categories=["pipeline"],
-                    )
-                    tts_stream.flush()
-                    buffer = ""
 
             if tts_stream is not None:
                 log.pipeline("ending tts stream")

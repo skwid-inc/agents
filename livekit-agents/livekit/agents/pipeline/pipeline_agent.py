@@ -1116,9 +1116,9 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
                 return
 
             assert isinstance(speech_handle.source, LLMStream)
-            assert not user_question or speech_handle.user_committed, (
-                "user speech should have been committed before using tools"
-            )
+            assert (
+                not user_question or speech_handle.user_committed
+            ), "user speech should have been committed before using tools"
 
             llm_stream = speech_handle.source
 
@@ -1244,9 +1244,9 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
         speech_id: str,
         source: str | LLMStream | AsyncIterable[str],
     ) -> SynthesisHandle:
-        assert self._agent_output is not None, (
-            "agent output should be initialized when ready"
-        )
+        assert (
+            self._agent_output is not None
+        ), "agent output should be initialized when ready"
 
         tk = SpeechDataContextVar.set(SpeechData(speech_id))
 
@@ -1359,8 +1359,12 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
 
         # due to timing, we could end up with two pushed agent replies inside the speech queue.
         # so make sure we directly interrupt every reply when validating a new one
-        # if self._should_interrupt():
-        #     self.interrupt()
+        for speech in self._speech_q:
+            if not speech.is_reply:
+                continue
+
+            if speech.allow_interruptions:
+                speech.interrupt()
 
         log.debug(
             "validated agent reply",
