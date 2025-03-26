@@ -535,8 +535,9 @@ class SynthesizeStream(tts.SynthesizeStream):
                 xml_content = []
                 async for data in word_stream:
                     text = data.token
-                    log.tts(
-                        f"Current expected text: {expected_text}, text: {text} from {id(word_stream)}"
+                    log.verbose(
+                        f"Current expected text: {expected_text}, text: {text} from {id(word_stream)}",
+                        categories=["TTS"],
                     )
                     expected_text += text
                     # send the xml phoneme in one go
@@ -554,7 +555,10 @@ class SynthesizeStream(tts.SynthesizeStream):
 
                     data_pkt = dict(text=f"{text} ")  # must always end with a space
                     self._mark_started()
-                    log.tts(f"send_task: sending text: ~{text}~")
+                    log.verbose(
+                        f"send_task: sending text: ~{text}~",
+                        categories=["TTS"],
+                    )
                     await ws_conn.send_str(json.dumps(data_pkt))
                     if any(char in text.strip() for char in [".", "!", "?"]):
                         if (
