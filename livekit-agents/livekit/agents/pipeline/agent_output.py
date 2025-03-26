@@ -300,36 +300,24 @@ class AgentOutput:
                     read_tts_atask = asyncio.create_task(
                         _read_generated_audio_task(tts_stream)
                     )
-
-                    read_transcript_atask_id = f"ReadTranscript-{str(uuid.uuid4())}"
-                    logger.info(f"Starting task: {read_transcript_atask_id}")
-                    pending_tasks = (
-                        AppConfig().get_call_metadata().get("pending_livekit_tasks", {})
-                    )
-                    pending_tasks[read_transcript_atask_id] = time.time()
-
                     read_transcript_atask = asyncio.create_task(
                         self._read_transcript_task(transcript_source, handle)
                     )
 
-                # Push to word tokenizer instead of directly to TTS
+                # Push to word tokenizer
                 logger.info(f"pushing text to word stream: {seg}")
                 word_stream.push_text(seg)
 
-                # Process each token from the word stream immediately
-                while True:
-                    token = await word_stream.get_next_token_nowait()
-                    if token is None:
-                        break
-                    logger.info(f"pushing token to tts: {token.token}")
-                    tts_stream.push_text(token.token)
+                # Process tokens as they become available using the async iterator
+                token_processing_task = asyncio.create_task(
+                    self._process_tokens(word_stream, tts_stream)
+                )
+                self._tasks.add(token_processing_task)
+                token_processing_task.add_done_callback(self._tasks.remove)
 
             # End processing
             if word_stream is not None:
                 word_stream.end_input()
-                # Process any remaining tokens
-                async for token in word_stream:
-                    tts_stream.push_text(token.token)
 
             if tts_stream is not None:
                 logger.info("ending tts stream")
@@ -347,3 +335,10 @@ class AgentOutput:
 
             if inspect.isasyncgen(tts_source):
                 await tts_source.aclose()
+
+    @utils.log_exceptions(logger=logger)
+    async def _process_tokens(self, word_stream, tts_stream) -> None:
+        """Process tokens from word stream and send to TTS stream"""
+        async for token in word_stream:
+            logger.info(f"pushing token to tts: {token.token}")
+            tts_stream.push_text(token.token)
