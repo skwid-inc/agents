@@ -41,6 +41,7 @@ from livekit.agents import (
 )
 from scipy import signal
 from custom_logger import log
+from .log import logger
 
 from .models import TTSEncoding, TTSModels
 
@@ -419,7 +420,7 @@ class SynthesizeStream(tts.SynthesizeStream):
         request_id = utils.shortuuid()
         self._segments_ch = utils.aio.Chan[tokenize.WordStream]()
 
-        @utils.log_exceptions(logger=log)
+        @utils.log_exceptions(logge=logger)
         async def _tokenize_input():
             """tokenize text from the input_ch to words"""
             word_stream = None
@@ -466,7 +467,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                 log.tts(f"ended word stream {id(word_stream)}")
             self._segments_ch.close()
 
-        @utils.log_exceptions(logger=log)
+        @utils.log_exceptions(logge=logger)
         async def _process_segments():
             async for word_stream in self._segments_ch:
                 log.tts(
@@ -528,7 +529,7 @@ class SynthesizeStream(tts.SynthesizeStream):
 
             eos_sent = False
 
-            @utils.log_exceptions(logger=log)
+            @utils.log_exceptions(logge=logger)
             async def send_task():
                 nonlocal expected_text, eos_sent
                 xml_content = []
@@ -576,7 +577,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                 await ws_conn.send_str(json.dumps({"text": " ", "flush": True}))
 
             # receives from ws and decodes audio
-            @utils.log_exceptions(logger=log)
+            @utils.log_exceptions(logge=logger)
             async def recv_task():
                 nonlocal expected_text, eos_sent
 

@@ -40,7 +40,7 @@ from livekit.agents import (
     utils,
 )
 from livekit.agents.utils import AudioBuffer
-
+from .log import logger
 from ._utils import PeriodicCollector
 from .models import DeepgramLanguages, DeepgramModels
 from custom_logger import log
@@ -447,7 +447,7 @@ class SpeechStream(stt.SpeechStream):
             except Exception:
                 return
 
-        @utils.log_exceptions(logger=log)
+        @utils.log_exceptions(logge=logger)
         async def send_task(ws: aiohttp.ClientWebSocketResponse):
             nonlocal closing_ws
             log.stt("inside send_task")
@@ -526,7 +526,7 @@ class SpeechStream(stt.SpeechStream):
             log.stt("Deepgram: About to send close message")
             await ws.send_str(SpeechStream._CLOSE_MSG)
 
-        @utils.log_exceptions(logger=log)
+        @utils.log_exceptions(logge=logger)
         async def recv_task(ws: aiohttp.ClientWebSocketResponse):
             nonlocal closing_ws
             while True:
