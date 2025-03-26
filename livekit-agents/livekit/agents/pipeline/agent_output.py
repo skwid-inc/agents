@@ -328,25 +328,19 @@ class AgentOutput:
 
                     read_transcript_atask.add_done_callback(_post_task_callback_2)
 
-                logger.info(f"pushing text: {seg}")
-                tts_stream.push_text(seg)
+                # logger.info(f"buffer: {buffer}")
+                # logger.info(f"seg: {seg}")
 
-                buffer += seg
-
-                # Inside your loop where you decide to flush:
-                skip_flush_pattern = re.compile(
-                    r"(?:\$[\d,]+\.?\d*%?$|\d+\.\d*%?$)"  # optional dollar sign + decimal + optional % OR just decimal + optional %
-                )
-
-                potential_incomplete_number = skip_flush_pattern.search(buffer)
-
-                if (
-                    re.search(r"[.!?](?!\d)", buffer)
-                    and not potential_incomplete_number
+                # Check if buffer ends with period and first char of seg is space or non-digit
+                if buffer.endswith((".", "!", "?")) and (
+                    not seg or seg[0] in " " or not seg[0].isdigit()
                 ):
                     logger.info(f"flushing tts stream with buffer: {buffer}")
                     tts_stream.flush()
                     buffer = ""
+
+                tts_stream.push_text(seg)
+                buffer += seg
 
             if tts_stream is not None:
                 logger.info("ending tts stream")
