@@ -290,7 +290,6 @@ class AgentOutput:
         read_transcript_atask = asyncio.create_task(
             self._read_transcript_task(transcript_source, handle)
         )
-        segments_ch = utils.aio.Chan[tokenize.WordStream]()
 
         @utils.log_exceptions(logger=logger)
         async def _tokenize_input():
@@ -306,7 +305,8 @@ class AgentOutput:
                         # New segment
                         logger.info("creating new word stream")
                         word_stream = handle._tts._opts.word_tokenizer.stream()
-                        segments_ch.send_nowait(word_stream)
+                        # Send the word stream directly to the TTS stream
+                        tts_stream.push_text(word_stream)
 
                     # Push to word tokenizer
                     logger.info(f"pushing text to word stream: {seg}")
@@ -317,29 +317,13 @@ class AgentOutput:
                     logger.info(f"ending word stream")
                     word_stream.end_input()
             finally:
-                segments_ch.close()
                 if inspect.isasyncgen(tts_source):
                     await tts_source.aclose()
 
-        @utils.log_exceptions(logger=logger)
-        async def _process_segments():
-            """Process word streams and send tokens to TTS"""
-            try:
-                async for word_stream in segments_ch:
-                    logger.info(f"received word stream from segments channel")
-                    # Process tokens as they become available using the async iterator
-                    async for token in word_stream:
-                        logger.info(f"pushing token to tts: {token.token}")
-                        tts_stream.push_text(token.token)
-            finally:
-                logger.info("ending tts stream")
-                tts_stream.end_input()
-
         try:
             tokenize_task = asyncio.create_task(_tokenize_input())
-            process_task = asyncio.create_task(_process_segments())
 
-            tasks = [tokenize_task, process_task, read_tts_atask, read_transcript_atask]
+            tasks = [tokenize_task, read_tts_atask, read_transcript_atask]
 
             # Wait for all tasks or until interrupted
             done, pending = await asyncio.wait(
@@ -359,5 +343,4 @@ class AgentOutput:
                 read_tts_atask,
                 read_transcript_atask,
                 tokenize_task if "tokenize_task" in locals() else None,
-                process_task if "process_task" in locals() else None,
             )
