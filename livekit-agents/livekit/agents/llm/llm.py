@@ -148,8 +148,9 @@ class LLMStream(ABC):
         self._task.add_done_callback(lambda _: self._event_ch.close())
 
         def _post_task_callback() -> None:
-            logger.info(f"Task completed: {llm_stream_task_id}")
+            log.pipeline(f"Task completed: {llm_stream_task_id}")
             pending_tasks.pop(llm_stream_task_id, None)
+            log.pipeline(pending_tasks)
 
         self._task.add_done_callback(_post_task_callback)
 

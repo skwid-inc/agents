@@ -737,8 +737,9 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
         )
 
         def _post_task_callback() -> None:
-            logger.info(f"Task completed: {agent_reply_task_id}")
+            log.pipeline(f"Task completed: {agent_reply_task_id}")
             pending_tasks.pop(agent_reply_task_id, None)
+            log.pipeline(pending_tasks)
 
         self._agent_reply_task.add_done_callback(_post_task_callback)
 
