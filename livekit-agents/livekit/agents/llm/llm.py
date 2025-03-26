@@ -19,6 +19,7 @@ from ..types import DEFAULT_API_CONNECT_OPTIONS, APIConnectOptions
 from ..utils import aio
 from . import function_context
 from .chat_context import ChatContext, ChatRole
+from custom_logger import log
 
 
 @dataclass
@@ -140,6 +141,8 @@ class LLMStream(ABC):
             AppConfig().get_call_metadata().setdefault("pending_livekit_tasks", {})
         )
         pending_tasks[llm_stream_task_id] = time.time()
+        log.pipeline("pending task - LLM stream")
+        log.pipeline(pending_tasks)
         self._task = asyncio.create_task(self._main_task())
 
         self._task.add_done_callback(lambda _: self._event_ch.close())

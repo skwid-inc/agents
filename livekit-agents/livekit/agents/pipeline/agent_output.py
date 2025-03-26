@@ -280,7 +280,7 @@ class AgentOutput:
                         self._read_transcript_task(transcript_source, handle)
                     )
 
-                log.pipeline(f"pushing text: {seg}")
+                log.verbose(f"pushing text: {seg}", categories=["pipeline"])
                 tts_stream.push_text(seg)
 
                 buffer += seg
@@ -296,7 +296,10 @@ class AgentOutput:
                     re.search(r"[.!?](?!\d)", buffer)
                     and not potential_incomplete_number
                 ):
-                    log.pipeline(f"flushing tts stream with buffer: {buffer}")
+                    log.verbose(
+                        f"flushing tts stream with buffer: {buffer}",
+                        categories=["pipeline"],
+                    )
                     tts_stream.flush()
                     buffer = ""
 
