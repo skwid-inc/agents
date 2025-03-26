@@ -94,8 +94,9 @@ class LLM(
         temperature: float | None = None,
         n: int | None = None,
         parallel_tool_calls: bool | None = None,
-        tool_choice: Union[ToolChoice, Literal["auto", "required", "none"]]
-        | None = None,
+        tool_choice: (
+            Union[ToolChoice, Literal["auto", "required", "none"]] | None
+        ) = None,
     ) -> "LLMStream": ...
 
     @property
@@ -137,9 +138,8 @@ class LLMStream(ABC):
         )
 
         llm_stream_task_id = f"LLMStream-{str(uuid.uuid4())}"
-        pending_tasks = (
-            AppConfig().get_call_metadata().setdefault("pending_livekit_tasks", {})
-        )
+        logger.info(f"Starting task: {llm_stream_task_id}")
+        pending_tasks = AppConfig().get_call_metadata().get("pending_livekit_tasks", {})
         pending_tasks[llm_stream_task_id] = time.time()
         log.pipeline("pending task - LLM stream")
         log.pipeline(pending_tasks)
@@ -147,7 +147,7 @@ class LLMStream(ABC):
 
         self._task.add_done_callback(lambda _: self._event_ch.close())
 
-        def _post_task_callback() -> None:
+        def _post_task_callback(_) -> None:
             log.pipeline(f"Task completed: {llm_stream_task_id}")
             pending_tasks.pop(llm_stream_task_id, None)
             log.pipeline(pending_tasks)

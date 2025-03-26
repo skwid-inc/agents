@@ -723,9 +723,8 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
         )
 
         agent_reply_task_id = f"AgentReply-{str(uuid.uuid4())}"
-        pending_tasks = (
-            AppConfig().get_call_metadata().setdefault("pending_livekit_tasks", {})
-        )
+        log.verbose(f"Starting task: {agent_reply_task_id}")
+        pending_tasks = AppConfig().get_call_metadata().get("pending_livekit_tasks", {})
         pending_tasks[agent_reply_task_id] = time.time()
         log.pipeline("pending task - synthesizing agent reply")
         log.pipeline(pending_tasks)
@@ -736,8 +735,8 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
             lambda t: new_handle.cancel() if t.cancelled() else None
         )
 
-        def _post_task_callback() -> None:
-            log.pipeline(f"Task completed: {agent_reply_task_id}")
+        def _post_task_callback(_) -> None:
+            log.verbose(f"Task completed: {agent_reply_task_id}")
             pending_tasks.pop(agent_reply_task_id, None)
             log.pipeline(pending_tasks)
 
@@ -798,6 +797,9 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
                     self._transcribed_text = self._transcribed_text[
                         len(handle.user_question) :
                     ]
+                log.verbose(
+                    "Cancelling handle due to user not wanting to synthesize an answer"
+                )
                 handle.cancel()
                 return
 
@@ -806,6 +808,7 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
                 llm_stream = _default_before_llm_cb(self, chat_ctx=copied_ctx)
 
             if handle.interrupted:
+                log.verbose("Returning early due to handle.interrupted")
                 return
 
             synthesis_handle = self._synthesize_agent_speech(handle.id, llm_stream)
@@ -1356,8 +1359,8 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
 
         # due to timing, we could end up with two pushed agent replies inside the speech queue.
         # so make sure we directly interrupt every reply when validating a new one
-        if self._should_interrupt():
-            self.interrupt()
+        # if self._should_interrupt():
+        #     self.interrupt()
 
         log.debug(
             "validated agent reply",
