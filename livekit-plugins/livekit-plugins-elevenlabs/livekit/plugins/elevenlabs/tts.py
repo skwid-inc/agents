@@ -636,7 +636,9 @@ class SynthesizeStream(tts.SynthesizeStream):
                             )
                             AppConfig().char_timings.extend(durations)
 
-                            received_text_to_print = "".join(alignment.get("chars", []))
+                            received_text_to_print = "".join(
+                                alignment.get("chars", [])
+                            ).replace(" ", "")
                             log.tts(
                                 f"recv_task: received text so far: {received_text_to_print}"
                             )
