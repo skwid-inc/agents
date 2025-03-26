@@ -210,7 +210,7 @@ class TTS(tts.TTS):
         return self._session
 
     def prewarm(self) -> None:
-        self._pool.prewarm()
+        self._pool.prewarm(5)
 
     async def list_voices(self) -> List[Voice]:
         async with self._ensure_session().get(
@@ -497,7 +497,7 @@ class SynthesizeStream(tts.SynthesizeStream):
         request_id: str,
     ) -> None:
         logger.info(f"running ws for word stream: {word_stream}")
-        async with self._pool.connection() as ws_conn:
+        async with self._pool.connection(one_time=True) as ws_conn:
             logger.info(f"got connection: {ws_conn}")
             segment_id = utils.shortuuid()
             expected_text = ""  # accumulate all tokens sent

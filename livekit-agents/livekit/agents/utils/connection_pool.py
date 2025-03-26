@@ -51,6 +51,8 @@ class ConnectionPool(Generic[T]):
         self._to_close: Set[T] = set()
 
         self._prewarm_task: Optional[weakref.ref[asyncio.Task]] = None
+        self._remove_tasks: Set[asyncio.Task] = set()
+        self._num_connections = 0
 
     async def _connect(self) -> T:
         """Create a new connection.
@@ -74,7 +76,7 @@ class ConnectionPool(Generic[T]):
         self._to_close.clear()
 
     @asynccontextmanager
-    async def connection(self) -> AsyncGenerator[T, None]:
+    async def connection(self, one_time: bool = False) -> AsyncGenerator[T, None]:
         """Get a connection from the pool and automatically return it when done.
 
         Yields:
@@ -84,10 +86,13 @@ class ConnectionPool(Generic[T]):
         try:
             yield conn
         except Exception:
-            self.remove(conn)
+            self._remove_tasks.add(weakref.ref(asyncio.create_task(self.remove(conn))))
             raise
         else:
-            self.put(conn)
+            if one_time:
+                self._remove_tasks.add(weakref.ref(asyncio.create_task(self.remove(conn))))
+            else:
+                self.put(conn)
 
     async def get(self) -> T:
         """Get an available connection or create a new one if needed.
@@ -110,7 +115,7 @@ class ConnectionPool(Generic[T]):
                     self._connections[conn] = now
                 return conn
             # connection expired; mark it for resetting.
-            self.remove(conn)
+            await self.remove(conn)
 
         return await self._connect()
 
@@ -134,7 +139,7 @@ class ConnectionPool(Generic[T]):
         if self._close_cb is not None:
             await self._close_cb(conn)
 
-    def remove(self, conn: T) -> None:
+    async def remove(self, conn: T) -> None:
         """Remove a specific connection from the pool.
 
         Marks the connection to be closed during the next drain cycle.
@@ -146,6 +151,9 @@ class ConnectionPool(Generic[T]):
         if conn in self._connections:
             self._to_close.add(conn)
             self._connections.pop(conn, None)
+        while len(self._available) < self._num_connections:
+            conn = await self._connect()
+            self._available.add(conn)
 
     def invalidate(self) -> None:
         """Clear all existing connections.
@@ -157,7 +165,7 @@ class ConnectionPool(Generic[T]):
         self._connections.clear()
         self._available.clear()
 
-    def prewarm(self) -> None:
+    def prewarm(self, n: int = 1) -> None:
         """Initiate prewarming of the connection pool without blocking.
 
         This method starts a background task that creates a new connection if none exist.
@@ -165,11 +173,13 @@ class ConnectionPool(Generic[T]):
         """
         if self._prewarm_task is not None or self._connections:
             return
+        self._num_connections = n
 
         async def _prewarm_impl():
             if not self._connections:
-                conn = await self._connect()
-                self._available.add(conn)
+                for _ in range(n):
+                    conn = await self._connect()
+                    self._available.add(conn)
 
         task = asyncio.create_task(_prewarm_impl())
         self._prewarm_task = weakref.ref(task)
