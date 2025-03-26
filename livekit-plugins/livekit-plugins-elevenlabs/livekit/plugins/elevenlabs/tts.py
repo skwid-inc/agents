@@ -688,11 +688,16 @@ class SynthesizeStream(tts.SynthesizeStream):
                         await chunk_decoder.aclose()
 
                         if alignment := data.get("normalizedAlignment"):
-                            received_text += "".join(alignment.get("chars", []))
-                            log.tts(
-                                f"recv_task: received text: {received_text}\n\nexpected_text: {expected_text}"
+                            received_text += "".join(
+                                alignment.get("chars", [])
+                            ).replace(" ", "")
+                            expected_text_without_spaces = expected_text.replace(
+                                " ", ""
                             )
-                            log.tts(
+                            logger.info(
+                                f"recv_task: received text: {received_text}\n\nexpected_text_without_spaces: {expected_text_without_spaces}"
+                            )
+                            logger.info(
                                 f"recv_task: safe_for_tts_to_break: {
                                     AppConfig()
                                     .get_call_metadata()
@@ -700,14 +705,14 @@ class SynthesizeStream(tts.SynthesizeStream):
                                 }"
                             )
                             if (
-                                received_text == expected_text
+                                received_text == expected_text_without_spaces
                                 # and AppConfig()
                                 # .get_call_metadata()
                                 # .get("safe_for_tts_to_break", "saikrishna")[:5]
                                 # in received_text
                             ):
                                 # decoder.end_input()
-                                log.tts(
+                                logger.info(
                                     f"recv_task: about to break due to received text == expected text: {expected_text}"
                                 )
                                 AppConfig().get_call_metadata().pop(
