@@ -15,6 +15,7 @@ from .. import transcription as agent_transcription
 from .. import tts as text_to_speech
 from .agent_playout import AgentPlayout, PlayoutHandle
 from .log import logger
+from custom_tokenize import StreamFlusher
 
 SpeechSource = Union[AsyncIterable[str], str, Awaitable[str]]
 
@@ -289,12 +290,13 @@ class AgentOutput:
         read_transcript_atask: asyncio.Task | None = None
 
         try:
-            buffer = ""  # Intermediary buffer to track text for flushing
             async for seg in tts_source:
                 logger.info(f"segment: {seg}")
                 if tts_stream is None:
                     logger.info("creating new tts stream")
                     tts_stream = handle._tts.stream()
+                    flusher = StreamFlusher(tts_stream)
+
                     read_tts_atask_id = f"ReadTTS-{str(uuid.uuid4())}"
                     logger.info(f"Starting task: {read_tts_atask_id}")
                     pending_tasks = (
@@ -328,19 +330,9 @@ class AgentOutput:
 
                     read_transcript_atask.add_done_callback(_post_task_callback_2)
 
-                # logger.info(f"buffer: {buffer}")
-                # logger.info(f"seg: {seg}")
+                logger.info(f"Agent Output seg: {seg}")
 
-                # Check if buffer ends with period and first char of seg is space or non-digit
-                if buffer.endswith((".", "!", "?")) and (
-                    not seg or seg[0] in " " or not seg[0].isdigit()
-                ):
-                    logger.info(f"flushing tts stream with buffer: {buffer}")
-                    tts_stream.flush()
-                    buffer = ""
-
-                tts_stream.push_text(seg)
-                buffer += seg
+                flusher.push_text(seg)
 
             if tts_stream is not None:
                 logger.info("ending tts stream")
