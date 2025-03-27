@@ -17,7 +17,7 @@ from typing import (
 
 from livekit import rtc
 
-from .._exceptions import APIConnectionError, APIError
+from .._exceptions import APIConnectionError, APIError, APIStatusError
 from ..log import logger
 from ..metrics import TTSMetrics
 from ..types import DEFAULT_API_CONNECT_OPTIONS, APIConnectOptions
@@ -203,6 +203,11 @@ class ChunkedStream(ABC):
                 retry_interval = self._conn_options._interval_for_retry(i)
                 if self._conn_options.max_retry == 0:
                     raise
+                elif isinstance(e, APIStatusError):
+                    if e.status_code == 429 or e.status_code == 500:
+                        continue
+                    else:
+                        raise e
                 elif i == self._conn_options.max_retry:
                     raise APIConnectionError(
                         f"failed to synthesize speech after {self._conn_options.max_retry + 1} attempts",
@@ -287,6 +292,12 @@ class SynthesizeStream(ABC):
                 retry_interval = self._conn_options._interval_for_retry(i)
                 if self._conn_options.max_retry == 0:
                     raise
+                elif isinstance(e, APIStatusError):
+                    if e.status_code == 429 or e.status_code == 500:
+                        continue
+                    else:
+                        raise e
+                
                 elif i == self._conn_options.max_retry:
                     raise APIConnectionError(
                         f"failed to synthesize speech after {self._conn_options.max_retry + 1} attempts",

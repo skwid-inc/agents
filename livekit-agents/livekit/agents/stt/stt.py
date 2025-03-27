@@ -10,7 +10,7 @@ from typing import AsyncIterable, AsyncIterator, Generic, List, Literal, TypeVar
 
 from livekit import rtc
 
-from .._exceptions import APIConnectionError, APIError
+from .._exceptions import APIConnectionError, APIError, APIStatusError
 from ..log import logger
 from ..metrics import STTMetrics
 from ..types import DEFAULT_API_CONNECT_OPTIONS, APIConnectOptions
@@ -122,6 +122,11 @@ class STT(
                 retry_interval = conn_options._interval_for_retry(i)
                 if conn_options.max_retry == 0:
                     raise
+                elif isinstance(e, APIStatusError):
+                    if e.status_code == 429 or e.status_code == 500:
+                        continue
+                    else:
+                        raise e
                 elif i == conn_options.max_retry:
                     raise APIConnectionError(
                         f"failed to recognize speech after {conn_options.max_retry + 1} attempts",
@@ -220,6 +225,11 @@ class RecognizeStream(ABC):
             except APIError as e:
                 if max_retries == 0:
                     raise
+                elif isinstance(e, APIStatusError):
+                    if e.status_code == 429 or e.status_code == 500:
+                        continue
+                    else:
+                        raise e
                 elif num_retries == max_retries:
                     raise APIConnectionError(
                         f"failed to recognize speech after {num_retries} attempts",
