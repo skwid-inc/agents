@@ -18,6 +18,7 @@ from typing import (
 )
 
 from app_config import AppConfig
+from custom_logger import log
 from livekit import rtc
 
 from .. import metrics, stt, tokenize, tts, utils, vad
@@ -26,7 +27,6 @@ from ..types import ATTRIBUTE_AGENT_STATE, AgentState
 from .agent_output import AgentOutput, SpeechSource, SynthesisHandle
 from .agent_playout import AgentPlayout
 from .human_input import HumanInput
-from custom_logger import log
 from .plotter import AssistantPlotter
 from .speech_handle import SpeechHandle
 
@@ -1116,9 +1116,9 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
                 return
 
             assert isinstance(speech_handle.source, LLMStream)
-            assert (
-                not user_question or speech_handle.user_committed
-            ), "user speech should have been committed before using tools"
+            assert not user_question or speech_handle.user_committed, (
+                "user speech should have been committed before using tools"
+            )
 
             llm_stream = speech_handle.source
 
@@ -1244,9 +1244,9 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
         speech_id: str,
         source: str | LLMStream | AsyncIterable[str],
     ) -> SynthesisHandle:
-        assert (
-            self._agent_output is not None
-        ), "agent output should be initialized when ready"
+        assert self._agent_output is not None, (
+            "agent output should be initialized when ready"
+        )
 
         tk = SpeechDataContextVar.set(SpeechData(speech_id))
 
@@ -1340,6 +1340,8 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
                     "interrupt threshold is not met",
                     extra={"speech_id": self._playing_speech.id},
                 )
+            elif self._should_interrupt():
+                self.interrupt()
 
             if should_ignore_input:
                 self._transcribed_text = ""
@@ -1359,12 +1361,12 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
 
         # due to timing, we could end up with two pushed agent replies inside the speech queue.
         # so make sure we directly interrupt every reply when validating a new one
-        for speech in self._speech_q:
-            if not speech.is_reply:
-                continue
+        # for speech in self._speech_q:
+        #     if not speech.is_reply:
+        #         continue
 
-            if speech.allow_interruptions:
-                speech.interrupt()
+        #     if speech.allow_interruptions:
+        #         speech.interrupt()
 
         log.debug(
             "validated agent reply",
