@@ -4,13 +4,14 @@ import asyncio
 import time
 from typing import Literal
 
-from app_config import AppConfig
 from livekit import rtc
+
+from app_config import AppConfig
+from custom_logger import log
 
 from .. import stt as speech_to_text
 from .. import transcription, utils
 from .. import vad as voice_activity_detection
-from custom_logger import log
 
 EventTypes = Literal[
     "start_of_speech",
@@ -129,6 +130,7 @@ class HumanInput(utils.EventEmitter[EventTypes]):
         async def _audio_stream_co() -> None:
             # forward the audio stream to the VAD and STT streams
             async for ev in audio_stream:
+                print(f"audio_stream_co: {ev}")
                 stt_stream.push_frame(ev.frame)
                 vad_stream.push_frame(ev.frame)
             stt_stream.end_input()
