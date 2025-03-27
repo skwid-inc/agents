@@ -10,7 +10,7 @@ from typing import Any, AsyncIterable, AsyncIterator, Generic, Literal, TypeVar,
 
 from app_config import AppConfig
 from livekit import rtc
-from livekit.agents._exceptions import APIConnectionError, APIError
+from livekit.agents._exceptions import APIConnectionError, APIError, APIStatusError
 
 from .. import utils
 from ..log import logger
@@ -166,8 +166,13 @@ class LLMStream(ABC):
                 return await self._run()
             except APIError as e:
                 retry_interval = self._conn_options._interval_for_retry(i)
-                if self._conn_options.max_retry == 0 or not e.retryable:
+                if self._conn_options.max_retry == 0:
                     raise
+                elif isinstance(e, APIStatusError):
+                    if e.status_code == 429 or e.status_code == 500:
+                        continue
+                    else:
+                        raise e
                 elif i == self._conn_options.max_retry:
                     raise APIConnectionError(
                         f"failed to generate LLM completion after {self._conn_options.max_retry + 1} attempts",
