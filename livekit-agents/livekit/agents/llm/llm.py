@@ -166,7 +166,7 @@ class LLMStream(ABC):
                 return await self._run()
             except APIError as e:
                 retry_interval = self._conn_options._interval_for_retry(i)
-                if self._conn_options.max_retry == 0:
+                if self._conn_options.max_retry == 0 or not e.retryable:
                     raise
                 elif isinstance(e, APIStatusError):
                     if e.status_code == 429 or e.status_code == 500:
