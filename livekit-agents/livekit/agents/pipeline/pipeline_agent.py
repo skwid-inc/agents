@@ -19,6 +19,7 @@ from typing import (
 
 from app_config import AppConfig
 from livekit import rtc
+from utils.text import replace_interrupted_text
 
 from .. import metrics, stt, tokenize, tts, utils, vad
 from ..llm import LLM, ChatContext, ChatMessage, FunctionContext, LLMStream
@@ -1037,39 +1038,30 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
                     f"collected_text: {collected_text}, last_llm_message: {AppConfig().last_llm_message}"
                 )
                 if interrupted:
-                    log.pipeline("interrupted=True")
-                    # if collected_text in (
-                    #     AppConfig().call_metadata.get("agent_interrupted_text") or ""
-                    # ):
                     AppConfig().agent_interrupted = True
-                    # app_config_text = AppConfig().call_metadata.get(
-                    #     "agent_interrupted_text"
-                    # )
-                    current_text = self._get_current_spoken_text() or ""
-                    log.pipeline(f"current_text: {current_text}")
-                    if (
-                        collected_text.replace(" ", "").lower()
-                        in current_text.replace(" ", "").lower()
-                        and collected_text.replace(" ", "").lower()
-                        != current_text.replace(" ", "").lower()
-                    ):
-                        log.pipeline(
-                            f"Replacing interrupted text=`{collected_text}` with `{current_text}`"
+
+                    computed_text = self._get_current_spoken_text() or ""
+                    potential_text = replace_interrupted_text(
+                        computed_text, collected_text
+                    )
+                    if potential_text:
+                        log.interrupt(
+                            f"Replacing interrupted text=`{collected_text}` with `{potential_text}`"
                         )
-                        collected_text = current_text + "..."
-                        log.pipeline(
-                            f"inside interrupt case, about to clear playout_buffer: {AppConfig().playout_buffer}"
-                        )
-                        AppConfig().playout_buffer = ""
-                        AppConfig().char_timings = []
+                        collected_text = potential_text
+                    log.interrupt(
+                        f"VPA Speech interrupted, about to clear playout_buffer: {AppConfig().playout_buffer}"
+                    )
+                    AppConfig().playout_buffer = ""
+                    AppConfig().char_timings = []
                 else:
-                    log.pipeline("interrupted=False")
+                    log.pipeline("VPA Speech not interrupted")
                     if (
                         collected_text.replace(" ", "").lower()
                         == AppConfig().last_llm_message.replace(" ", "").lower()
                     ):
                         log.pipeline(
-                            f"inside collected_text == AppConfig().last_llm_message, about to clear playout_buffer: {AppConfig().playout_buffer}"
+                            f"VPA Speech not interrupted, collected_text == AppConfig().last_llm_message, about to clear playout_buffer: {AppConfig().playout_buffer}"
                         )
                         AppConfig().playout_buffer = ""
                         AppConfig().char_timings = []
@@ -1116,9 +1108,9 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
                 return
 
             assert isinstance(speech_handle.source, LLMStream)
-            assert (
-                not user_question or speech_handle.user_committed
-            ), "user speech should have been committed before using tools"
+            assert not user_question or speech_handle.user_committed, (
+                "user speech should have been committed before using tools"
+            )
 
             llm_stream = speech_handle.source
 
@@ -1244,9 +1236,9 @@ class VoicePipelineAgent(utils.EventEmitter[EventTypes]):
         speech_id: str,
         source: str | LLMStream | AsyncIterable[str],
     ) -> SynthesisHandle:
-        assert (
-            self._agent_output is not None
-        ), "agent output should be initialized when ready"
+        assert self._agent_output is not None, (
+            "agent output should be initialized when ready"
+        )
 
         tk = SpeechDataContextVar.set(SpeechData(speech_id))
 
