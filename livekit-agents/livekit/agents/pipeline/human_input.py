@@ -130,7 +130,7 @@ class HumanInput(utils.EventEmitter[EventTypes]):
         async def _audio_stream_co() -> None:
             # forward the audio stream to the VAD and STT streams
             async for ev in audio_stream:
-                print(f"audio_stream_co: {ev}")
+                print(f"audio_stream_co: {ev.frame}")
                 stt_stream.push_frame(ev.frame)
                 vad_stream.push_frame(ev.frame)
             stt_stream.end_input()
