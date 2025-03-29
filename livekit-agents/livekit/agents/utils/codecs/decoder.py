@@ -94,7 +94,7 @@ class AudioStreamDecoder:
     _max_workers: int = 10
     _executor: Optional[ThreadPoolExecutor] = None
 
-    def __init__(self, *, sample_rate: int = 48000, num_channels: int = 1):
+    def __init__(self, *, sample_rate: int = 16000, num_channels: int = 1):
         try:
             import av  # noqa
         except ImportError:
