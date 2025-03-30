@@ -399,6 +399,7 @@ class Agent:
         assert activity.tts is not None, "tts_node called but no TTS node is available"
 
         wrapped_tts = activity.tts
+        logger.info(f"Wrapped TTS: {id(wrapped_tts)}. Type: {type(wrapped_tts)}")
 
         if not activity.tts.capabilities.streaming:
             wrapped_tts = tts.StreamAdapter(
@@ -406,9 +407,11 @@ class Agent:
             )
 
         async with wrapped_tts.stream() as stream:
+            logger.info(f"Stream: {id(stream)}. Type: {type(stream)}")
 
             async def _forward_input():
                 async for chunk in text:
+                    logger.info(f"Forwarding input: ~{chunk}~")
                     stream.push_text(chunk)
 
                 stream.end_input()
@@ -416,6 +419,7 @@ class Agent:
             forward_task = asyncio.create_task(_forward_input())
             try:
                 async for ev in stream:
+                    logger.info(f"Yielding event: ~{ev}~")
                     yield ev.frame
             finally:
                 await utils.aio.cancel_and_wait(forward_task)

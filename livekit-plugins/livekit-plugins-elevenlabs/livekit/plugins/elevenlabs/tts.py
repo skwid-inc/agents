@@ -330,8 +330,10 @@ class SynthesizeStream(tts.SynthesizeStream):
     ):
         super().__init__(tts=tts, conn_options=conn_options)
         self._opts, self._session = opts, session
+        self._throw_exception = True
 
     async def _run(self) -> None:
+        logger.info("SynthesizeStream _run")
         request_id = utils.shortuuid()
         self._segments_ch = utils.aio.Chan[tokenize.WordStream]()
 
@@ -345,6 +347,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                         # new segment (after flush for e.g)
                         word_stream = self._opts.word_tokenizer.stream()
                         self._segments_ch.send_nowait(word_stream)
+                    logger.info(f"Pushing text to word_stream {id(word_stream)}: ~{input}~")
                     word_stream.push_text(input)
                 elif isinstance(input, self._FlushSentinel):
                     if word_stream is not None:
@@ -384,6 +387,7 @@ class SynthesizeStream(tts.SynthesizeStream):
         word_stream: tokenize.WordStream,
         request_id: str,
     ) -> None:
+        # sent_text = []
         ws_conn = await self._session.ws_connect(
             _stream_url(self._opts),
             headers={AUTHORIZATION_HEADER: self._opts.api_key},
@@ -403,6 +407,7 @@ class SynthesizeStream(tts.SynthesizeStream):
             else None,
             "generation_config": {"chunk_length_schedule": self._opts.chunk_length_schedule},
         }
+        # sent_text.extend(list(init_pkt["text"]))
         await ws_conn.send_str(json.dumps(init_pkt))
         eos_sent = False
 
@@ -425,14 +430,20 @@ class SynthesizeStream(tts.SynthesizeStream):
                     else:
                         continue
 
+                # text = text.replace("°", "deg")
+                # Convert text to list of characters
                 data_pkt = {"text": f"{text} "}  # must always end with a space
                 self._mark_started()
+                logger.info(f"Sending data packet from {id(word_stream)}: ~{data_pkt}~")
                 await ws_conn.send_str(json.dumps(data_pkt))
+                # sent_text.extend(list(data_pkt["text"]))
             if xml_content:
                 logger.warning("11labs stream ended with incomplete xml content")
 
             # no more token, mark eos
             eos_pkt = {"text": ""}
+            logger.info(f"Sending eos packet from {id(word_stream)}: ~{eos_pkt}~")
+            # logger.info(f"sent_text: {sent_text}")
             await ws_conn.send_str(json.dumps(eos_pkt))
             eos_sent = True
 
@@ -451,9 +462,13 @@ class SynthesizeStream(tts.SynthesizeStream):
         # receives from ws and decodes audio
         @utils.log_exceptions(logger=logger)
         async def recv_task():
-            nonlocal eos_sent
+            nonlocal eos_sent#, sent_text
 
             while True:
+                # if self._throw_exception:
+                #     self._throw_exception = False
+                #     raise Exception("test exception")
+
                 msg = await ws_conn.receive()
                 if msg.type in (
                     aiohttp.WSMsgType.CLOSED,
@@ -474,9 +489,28 @@ class SynthesizeStream(tts.SynthesizeStream):
                 data = json.loads(msg.data)
                 if data.get("audio"):
                     b64data = base64.b64decode(data["audio"])
+                    logger.info("Received audio message")
+                    __data = data.copy()
+                    __data.pop("audio")
+                    logger.info(f"Pushing data to decoder: {__data}")
                     decoder.push(b64data)
+                    # if data.get("normalizedAlignment") is None:
+                    #     logger.info("No normalizedAlignment")
+                    #     continue
+
+                    # i = 0
+                    # for char in data.get("normalizedAlignment", {}).get("chars", []):
+                    #     # logger.info(f"char: {char}, sent_text[i]: {sent_text[i]}")
+                    #     if char == sent_text[i]:
+                    #         i += 1
+                    #     else:
+                    #         logger.info(f"Mismatch at {i}: {char} != {sent_text[i]}")
+                    #         # break
+                    # sent_text = sent_text[i:]
+                    # logger.info(f"received text for word_stream {id(word_stream)}: {''.join(data.get('normalizedAlignment', {}).get('chars', []))}")
 
                 elif data.get("isFinal"):
+                    logger.info("Received isFinal message")
                     decoder.end_input()
                     break
                 elif data.get("error"):

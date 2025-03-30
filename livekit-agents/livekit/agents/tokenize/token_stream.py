@@ -5,11 +5,12 @@ from typing import Callable, Union
 
 from ..utils import aio, shortuuid
 from .tokenizer import SentenceStream, TokenData, WordStream
+import logging
 
+logger = logging.getLogger("livekit.agents")
 # Tokenizers can either provide us with a list of tokens or a list of tokens along with their start and end indices.  # noqa: E501
 # If the start and end indices are not available, we attempt to locate the token within the text using str.find.  # noqa: E501
 TokenizeCallable = Callable[[str], Union[list[str], list[tuple[str, int, int]]]]
-
 
 class BufferedTokenStream:
     def __init__(
@@ -34,6 +35,7 @@ class BufferedTokenStream:
     @typing.no_type_check
     def push_text(self, text: str) -> None:
         self._check_not_closed()
+        logger.info(f"Pushing text: ~{text}~ inside {self.__class__.__name__}")
         self._in_buf += text
 
         if len(self._in_buf) < self._min_ctx_len:
@@ -54,6 +56,7 @@ class BufferedTokenStream:
 
             self._out_buf += tok_text
             if len(self._out_buf) >= self._min_token_len:
+                logger.info(f"Pushing token: ~{self._out_buf}~ inside {self.__class__.__name__}")
                 self._event_ch.send_nowait(
                     TokenData(token=self._out_buf, segment_id=self._current_segment_id)
                 )
@@ -82,6 +85,7 @@ class BufferedTokenStream:
                     self._out_buf += " ".join(tokens)
 
             if self._out_buf:
+                logger.info(f"Pushing flush token: ~{self._out_buf}~ inside {self.__class__.__name__}")
                 self._event_ch.send_nowait(
                     TokenData(token=self._out_buf, segment_id=self._current_segment_id)
                 )
