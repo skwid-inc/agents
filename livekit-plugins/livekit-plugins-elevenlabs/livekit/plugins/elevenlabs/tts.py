@@ -475,6 +475,20 @@ class SynthesizeStream(tts.SynthesizeStream):
                 if data.get("audio"):
                     b64data = base64.b64decode(data["audio"])
                     decoder.push(b64data)
+                    # if data.get("normalizedAlignment") is None:
+                    #     logger.info("No normalizedAlignment")
+                    #     continue
+
+                    # i = 0
+                    # for char in data.get("normalizedAlignment", {}).get("chars", []):
+                    #     # logger.info(f"char: {char}, sent_text[i]: {sent_text[i]}")
+                    #     if char == sent_text[i]:
+                    #         i += 1
+                    #     else:
+                    #         logger.info(f"Mismatch at {i}: {char} != {sent_text[i]}")
+                    #         # break
+                    # sent_text = sent_text[i:]
+                    # logger.info(f"received text for word_stream {id(word_stream)}: {''.join(data.get('normalizedAlignment', {}).get('chars', []))}")
 
                 elif data.get("isFinal"):
                     decoder.end_input()
