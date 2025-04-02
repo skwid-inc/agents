@@ -247,6 +247,7 @@ class SynthesizeStream(ABC):
         self._tts = tts
         self._conn_options = conn_options or DEFAULT_API_CONNECT_OPTIONS
         self._input_ch = aio.Chan[Union[str, SynthesizeStream._FlushSentinel]]()
+        logger.info(f"initializing SynthesizeStream with input_ch: {id(self._input_ch)}")
         self._event_ch = aio.Chan[SynthesizedAudio]()
         self._event_aiter, self._monitor_aiter = aio.itertools.tee(self._event_ch, 2)
 
@@ -356,6 +357,7 @@ class SynthesizeStream(ABC):
         self._mtc_text += token
         self._check_input_not_ended()
         self._check_not_closed()
+        logger.info(f"pushing text: {token} to {id(self)} input_ch: {id(self._input_ch)}")
         self._input_ch.send_nowait(token)
 
     def flush(self) -> None:

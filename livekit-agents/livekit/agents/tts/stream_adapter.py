@@ -44,6 +44,7 @@ class StreamAdapter(TTS):
         *,
         conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
     ) -> StreamAdapterWrapper:
+        logger.info(f"starting StreamAdapterWrapper stream for {id(self)}")
         return StreamAdapterWrapper(
             tts=self,
             conn_options=conn_options,
@@ -72,8 +73,10 @@ class StreamAdapterWrapper(SynthesizeStream):
         pass  # do nothing
 
     async def _run(self) -> None:
+        logger.info(f"starting StreamAdapterWrapper _run for {id(self)} input_ch: {id(self._input_ch)}")
         async def _forward_input():
             """forward input to vad"""
+            logger.info(f"starting forward_input for {id(self._sent_stream)}")
             async for data in self._input_ch:
                 logger.info(f"forwarding input of type {type(data)}: {data} from {id(self._sent_stream)}")
                 if isinstance(data, self._FlushSentinel):
@@ -85,9 +88,12 @@ class StreamAdapterWrapper(SynthesizeStream):
             self._sent_stream.end_input()
 
         async def _synthesize():
+            logger.info(f"starting _synthesize for {id(self._sent_stream)}")
             async for ev in self._sent_stream:
+                logger.info(f"synthesizing token: {ev.token} for {id(self._sent_stream)}")
                 last_audio: SynthesizedAudio | None = None
                 async for audio in self._wrapped_tts.synthesize(ev.token):
+                    # logger.info(f"synthesized audio: {audio} for {id(self._sent_stream)}")
                     if last_audio is not None:
                         self._event_ch.send_nowait(last_audio)
 
