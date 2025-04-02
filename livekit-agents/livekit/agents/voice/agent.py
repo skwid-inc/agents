@@ -397,16 +397,16 @@ class Agent:
         """  # noqa: E501
         import traceback
         logger.info(f"tts_node called for {id(self)} from {traceback.format_stack()}")
-        activity = self.__get_activity_or_raise()
-        assert activity.tts is not None, "tts_node called but no TTS node is available"
+        # activity = self.__get_activity_or_raise()
+        # assert activity.tts is not None, "tts_node called but no TTS node is available"
 
-        wrapped_tts = activity.tts
+        # wrapped_tts = activity.tts
 
-        if not activity.tts.capabilities.streaming:
-            logger.info(f"wrapping tts with stream adapter for {id(wrapped_tts)}")
-            wrapped_tts = tts.StreamAdapter(
-                tts=wrapped_tts, sentence_tokenizer=tokenize.basic.SentenceTokenizer()
-            )
+        # if not activity.tts.capabilities.streaming:
+        #     logger.info(f"wrapping tts with stream adapter for {id(wrapped_tts)}")
+        #     wrapped_tts = tts.StreamAdapter(
+        #         tts=wrapped_tts, sentence_tokenizer=tokenize.basic.SentenceTokenizer()
+        #     )
 
         # async with wrapped_tts.stream() as stream:
 

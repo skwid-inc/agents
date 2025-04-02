@@ -61,8 +61,7 @@ class SentenceTokenizer(tokenizer.SentenceTokenizer):
         return response
 
     def stream(self, *, language: str | None = None) -> tokenizer.SentenceStream:
-        logger.info(f"creating BufferedSentenceStream with {_basic_sent.split_sentences} and {self._config} for {id(self)}")
-        return token_stream.BufferedSentenceStream(
+        bss = token_stream.BufferedSentenceStream(
             tokenizer=functools.partial(
                 _basic_sent.split_sentences,
                 min_sentence_len=self._config.min_sentence_len,
@@ -71,6 +70,8 @@ class SentenceTokenizer(tokenizer.SentenceTokenizer):
             min_token_len=self._config.min_sentence_len,
             min_ctx_len=self._config.stream_context_len,
         )
+        logger.info(f"creating BufferedSentenceStream {id(bss)} with {_basic_sent.split_sentences} and {self._config} for {id(self)}")
+        return bss
 
 
 class WordTokenizer(tokenizer.WordTokenizer):
