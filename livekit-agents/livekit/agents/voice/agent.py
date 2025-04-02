@@ -372,6 +372,7 @@ class Agent:
         """  # noqa: E501
         self.__get_activity_or_raise()
         async for delta in text:
+            logger.info(f"transcription_node yielding delta: {delta}")
             yield delta
 
     async def tts_node(

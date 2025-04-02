@@ -135,6 +135,7 @@ class _SegmentSynchronizerImpl:
 
     def __init__(self, options: _TextSyncOptions, *, next_in_chain: io.TextOutput) -> None:
         self._opts = options
+        logger.info(f"initializing _SegmentSynchronizerImpl with {id(self)}")
         self._text_data = _TextData(sentence_stream=self._opts.sentence_tokenizer.stream())
         self._audio_data = _AudioData(sr_stream=self._opts.speaking_rate_detector.stream())
 
