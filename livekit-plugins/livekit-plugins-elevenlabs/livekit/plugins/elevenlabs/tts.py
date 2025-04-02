@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 import dataclasses
 import json
 import os
@@ -345,6 +346,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                         # new segment (after flush for e.g)
                         word_stream = self._opts.word_tokenizer.stream()
                         self._segments_ch.send_nowait(word_stream)
+                    logger.info(f"pushing text: {input} to word_stream {id(word_stream)}")
                     word_stream.push_text(input)
                 elif isinstance(input, self._FlushSentinel):
                     if word_stream is not None:
@@ -427,12 +429,14 @@ class SynthesizeStream(tts.SynthesizeStream):
 
                 data_pkt = {"text": f"{text} "}  # must always end with a space
                 self._mark_started()
+                logger.info(f"sending text: {text} to 11labs from word_stream {id(word_stream)}")
                 await ws_conn.send_str(json.dumps(data_pkt))
             if xml_content:
                 logger.warning("11labs stream ended with incomplete xml content")
 
             # no more token, mark eos
             eos_pkt = {"text": ""}
+            logger.info(f"sending eos to 11labs from word_stream {id(word_stream)}")
             await ws_conn.send_str(json.dumps(eos_pkt))
             eos_sent = True
 
@@ -445,6 +449,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                 segment_id=segment_id,
             )
             async for frame in decoder:
+                logger.info(f"pushing frame to emitter from {id(word_stream)}")
                 emitter.push(frame)
             emitter.flush()
 
@@ -455,6 +460,7 @@ class SynthesizeStream(tts.SynthesizeStream):
 
             while True:
                 msg = await ws_conn.receive()
+                logger.info(f"received message from 11labs: {msg.type}")
                 if msg.type in (
                     aiohttp.WSMsgType.CLOSED,
                     aiohttp.WSMsgType.CLOSE,
@@ -475,8 +481,12 @@ class SynthesizeStream(tts.SynthesizeStream):
                 if data.get("audio"):
                     b64data = base64.b64decode(data["audio"])
                     decoder.push(b64data)
+                    aa = copy.copy(data)
+                    aa.pop("audio")
+                    logger.info(f"received audio from 11labs: {aa} from {id(word_stream)}")
 
                 elif data.get("isFinal"):
+                    logger.info(f"received isFinal from 11labs from {id(word_stream)}")
                     decoder.end_input()
                     break
                 elif data.get("error"):
