@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import typing
 from typing import Callable, Union
 
@@ -10,6 +11,7 @@ from .tokenizer import SentenceStream, TokenData, WordStream
 # If the start and end indices are not available, we attempt to locate the token within the text using str.find.  # noqa: E501
 TokenizeCallable = Callable[[str], Union[list[str], list[tuple[str, int, int]]]]
 
+logger = logging.getLogger(__name__)
 
 class BufferedTokenStream:
     def __init__(
@@ -40,7 +42,9 @@ class BufferedTokenStream:
             return
 
         while True:
+            logger.info(f"in_buf: {self._in_buf} to {self._tokenize_fnc.__name__} from {id(self)}")
             tokens = self._tokenize_fnc(self._in_buf)
+            logger.info(f"tokens: {tokens} from {id(self)}")
             if len(tokens) <= 1:
                 break
 
@@ -48,12 +52,14 @@ class BufferedTokenStream:
                 self._out_buf += " "
 
             tok = tokens.pop(0)
+            logger.info(f"tok: {tok} from {id(self)}")
             tok_text = tok
             if isinstance(tok, tuple):
                 tok_text = tok[0]
 
             self._out_buf += tok_text
             if len(self._out_buf) >= self._min_token_len:
+                logger.info(f"sending {self._out_buf} from {id(self)}")
                 self._event_ch.send_nowait(
                     TokenData(token=self._out_buf, segment_id=self._current_segment_id)
                 )
@@ -65,6 +71,7 @@ class BufferedTokenStream:
             else:
                 tok_i = max(self._in_buf.find(tok), 0)
                 self._in_buf = self._in_buf[tok_i + len(tok) :].lstrip()
+            logger.info(f"in_buf after sending: {self._in_buf} from {id(self)}")
 
     @typing.no_type_check
     def flush(self) -> None:

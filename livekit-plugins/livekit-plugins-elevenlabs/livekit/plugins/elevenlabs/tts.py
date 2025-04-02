@@ -451,6 +451,7 @@ class SynthesizeStream(tts.SynthesizeStream):
             async for frame in decoder:
                 logger.info(f"pushing frame to emitter from {id(word_stream)}")
                 emitter.push(frame)
+            logger.info(f"flushing emitter from {id(word_stream)}")
             emitter.flush()
 
         # receives from ws and decodes audio

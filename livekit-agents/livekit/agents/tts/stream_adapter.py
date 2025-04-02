@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterable
+import logging
 
 from .. import tokenize, utils
 from ..types import DEFAULT_API_CONNECT_OPTIONS, APIConnectOptions
 from .tts import TTS, ChunkedStream, SynthesizedAudio, SynthesizeStream, TTSCapabilities
 
+logger = logging.getLogger(__name__)
 
 class StreamAdapter(TTS):
     def __init__(
@@ -73,11 +75,13 @@ class StreamAdapterWrapper(SynthesizeStream):
         async def _forward_input():
             """forward input to vad"""
             async for data in self._input_ch:
+                logger.info(f"forwarding input of type {type(data)}: {data} from {id(self._sent_stream)}")
                 if isinstance(data, self._FlushSentinel):
                     self._sent_stream.flush()
                     continue
                 self._sent_stream.push_text(data)
 
+            logger.info(f"ending input for {id(self._sent_stream)}")
             self._sent_stream.end_input()
 
         async def _synthesize():

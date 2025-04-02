@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 from dataclasses import dataclass
+import logging
 
 from . import (
     _basic_hyphenator,
@@ -22,7 +23,7 @@ __all__ = [
     "tokenize_paragraphs",
 ]
 
-
+logger = logging.getLogger(__name__)
 @dataclass
 class _TokenizerOptions:
     language: str
@@ -48,7 +49,7 @@ class SentenceTokenizer(tokenizer.SentenceTokenizer):
         )
 
     def tokenize(self, text: str, *, language: str | None = None) -> list[str]:
-        return [
+        response =  [
             tok[0]
             for tok in _basic_sent.split_sentences(
                 text,
@@ -56,6 +57,8 @@ class SentenceTokenizer(tokenizer.SentenceTokenizer):
                 retain_format=self._config.retain_format,
             )
         ]
+        logger.info(f"tokenize response: {response}")
+        return response
 
     def stream(self, *, language: str | None = None) -> tokenizer.SentenceStream:
         return token_stream.BufferedSentenceStream(

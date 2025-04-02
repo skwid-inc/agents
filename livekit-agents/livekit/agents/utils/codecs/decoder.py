@@ -124,6 +124,7 @@ class AudioStreamDecoder:
         resampler: av.AudioResampler | None = None
         try:
             container = av.open(self._input_buf, mode="r")
+            logger.info(f"opened container: {container}")
             if len(container.streams.audio) == 0:
                 raise ValueError("no audio stream found")
 
@@ -131,6 +132,7 @@ class AudioStreamDecoder:
             resampler = av.AudioResampler(format="s16", layout=self._layout, rate=self._sample_rate)
 
             for frame in container.decode(audio_stream):
+                logger.info(f"decoded frame: {frame}")
                 if self._closed:
                     return
 
