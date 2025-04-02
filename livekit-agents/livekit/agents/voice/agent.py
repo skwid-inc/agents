@@ -407,10 +407,13 @@ class Agent:
 
         async with wrapped_tts.stream() as stream:
 
+            logger.info(f"starting tts stream for {id(stream)}.")
             async def _forward_input():
                 async for chunk in text:
+                    logger.info(f"pushing text: {chunk} to {id(stream)}")
                     stream.push_text(chunk)
 
+                logger.info(f"ending input for {id(stream)}")
                 stream.end_input()
 
             forward_task = asyncio.create_task(_forward_input())

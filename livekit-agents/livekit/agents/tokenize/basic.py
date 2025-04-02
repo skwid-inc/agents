@@ -61,6 +61,7 @@ class SentenceTokenizer(tokenizer.SentenceTokenizer):
         return response
 
     def stream(self, *, language: str | None = None) -> tokenizer.SentenceStream:
+        logger.info(f"creating BufferedSentenceStream with {_basic_sent.split_sentences} and {self._config} for {id(self)}")
         return token_stream.BufferedSentenceStream(
             tokenizer=functools.partial(
                 _basic_sent.split_sentences,
