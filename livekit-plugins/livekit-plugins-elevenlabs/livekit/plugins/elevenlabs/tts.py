@@ -448,8 +448,11 @@ class SynthesizeStream(tts.SynthesizeStream):
                 request_id=request_id,
                 segment_id=segment_id,
             )
+            printed = False
             async for frame in decoder:
-                logger.info(f"pushing frame to emitter from {id(word_stream)}")
+                if not printed:
+                    logger.info(f"pushing frame to emitter from {id(word_stream)}")
+                    printed = True
                 emitter.push(frame)
             logger.info(f"flushing emitter from {id(word_stream)}")
             emitter.flush()

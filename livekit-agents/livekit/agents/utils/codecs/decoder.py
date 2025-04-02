@@ -131,9 +131,13 @@ class AudioStreamDecoder:
             audio_stream = container.streams.audio[0]
             resampler = av.AudioResampler(format="s16", layout=self._layout, rate=self._sample_rate)
 
+            decoding_started = False
             for frame in container.decode(audio_stream):
-                logger.info(f"decoded frame: {frame}")
+                if not decoding_started:
+                    logger.info(f"decoding started for {id(self)}")
+                    decoding_started = True
                 if self._closed:
+                    logger.info(f"decoding closed for {id(self)}")
                     return
 
                 for resampled_frame in resampler.resample(frame):
