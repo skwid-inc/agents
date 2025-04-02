@@ -68,6 +68,7 @@ class StreamAdapterWrapper(SynthesizeStream):
         super().__init__(tts=tts, conn_options=conn_options)
         self._wrapped_tts = wrapped_tts
         self._sent_stream = sentence_tokenizer.stream()
+        logger.info(f"StreamAdapterWrapper __init__ for {id(self)} input_ch: {id(self._input_ch)}")
 
     async def _metrics_monitor_task(self, event_aiter: AsyncIterable[SynthesizedAudio]) -> None:
         pass  # do nothing

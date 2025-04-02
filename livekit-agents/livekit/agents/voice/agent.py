@@ -408,23 +408,24 @@ class Agent:
                 tts=wrapped_tts, sentence_tokenizer=tokenize.basic.SentenceTokenizer()
             )
 
-        async with wrapped_tts.stream() as stream:
+        # async with wrapped_tts.stream() as stream:
 
-            logger.info(f"starting tts stream for {id(stream)}.")
-            async def _forward_input():
-                async for chunk in text:
-                    logger.info(f"pushing text: {chunk} to {id(stream)}")
-                    stream.push_text(chunk)
+        #     logger.info(f"starting tts stream for {id(stream)}.")
+        #     async def _forward_input():
+        #         async for chunk in text:
+        #             logger.info(f"pushing text: {chunk} to {id(stream)}")
+        #             stream.push_text(chunk)
 
-                logger.info(f"ending input for {id(stream)}")
-                stream.end_input()
+        #         logger.info(f"ending input for {id(stream)}")
+        #         stream.end_input()
 
-            forward_task = asyncio.create_task(_forward_input())
-            try:
-                async for ev in stream:
-                    yield ev.frame
-            finally:
-                await utils.aio.cancel_and_wait(forward_task)
+        #     forward_task = asyncio.create_task(_forward_input())
+        #     try:
+        #         async for ev in stream:
+        #             yield ev.frame
+        #     finally:
+        #         await utils.aio.cancel_and_wait(forward_task)
+        # logger.info(f"ending tts stream for {id(stream)}")
 
     def __get_activity_or_raise(self) -> AgentActivity:
         """Get the current activity context for this task (internal)"""

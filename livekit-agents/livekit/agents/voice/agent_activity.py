@@ -775,6 +775,7 @@ class AgentActivity(RecognitionHooks):
         else:
             if audio is None:
                 # generate audio using TTS
+                logger.info(f"generating audio using TTS for {id(self)}")
                 tts_task, tts_gen_data = perform_tts_inference(
                     node=self._agent.tts_node,
                     input=audio_source,
@@ -873,6 +874,7 @@ class AgentActivity(RecognitionHooks):
         tts_task: asyncio.Task | None = None
         tts_gen_data: _TTSGenerationData | None = None
         if audio_output is not None:
+            logger.info(f"generating audio using TTS for {id(self)}")
             tts_task, tts_gen_data = perform_tts_inference(
                 node=self._agent.tts_node,
                 input=tts_text_input,

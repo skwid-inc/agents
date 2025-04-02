@@ -266,6 +266,7 @@ class SynthesizeStream(ABC):
     async def _main_task(self) -> None:
         for i in range(self._conn_options.max_retry + 1):
             try:
+                logger.info(f"starting _run for {id(self)}")
                 return await self._run()
             except APIError as e:
                 retry_interval = self._conn_options._interval_for_retry(i)
