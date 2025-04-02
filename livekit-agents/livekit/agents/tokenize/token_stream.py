@@ -42,7 +42,7 @@ class BufferedTokenStream:
             return
 
         while True:
-            logger.info(f"in_buf: {self._in_buf} to {self._tokenize_fnc.__name__} from {id(self)}")
+            logger.info(f"in_buf: {self._in_buf} to {self._tokenize_fnc} from {id(self)}")
             tokens = self._tokenize_fnc(self._in_buf)
             logger.info(f"tokens: {tokens} from {id(self)}")
             if len(tokens) <= 1:
