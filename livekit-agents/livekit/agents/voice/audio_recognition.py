@@ -229,17 +229,15 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                 actual_speech_end_time = (
                     self._audio_stream_start_time + self._last_transcript_end_time
                 )
-                transcription_delay = max(
-                    self._last_final_transcript_time - actual_speech_end_time, 0
-                )
             else:
-                transcription_delay = max(
-                    self._last_final_transcript_time - self._last_speaking_time, 0
-                )
+                actual_speech_end_time = self._last_speaking_time
+
+            transcription_delay = max(self._last_final_transcript_time - actual_speech_end_time, 0)
+            end_of_utterance_delay = max(time.time() - actual_speech_end_time, 0)
 
             eou_metrics = metrics.EOUMetrics(
                 timestamp=time.time(),
-                end_of_utterance_delay=time.time() - self._last_speaking_time,
+                end_of_utterance_delay=end_of_utterance_delay,
                 transcription_delay=transcription_delay,
             )
             self.emit("metrics_collected", eou_metrics)
