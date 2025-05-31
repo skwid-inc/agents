@@ -87,7 +87,9 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
     def push_audio(self, frame: rtc.AudioFrame) -> None:
         if self._audio_stream_start_time is None:
             self._audio_stream_start_time = time.time()
-
+            logger.info(
+                f"Pushing audio, setting audio stream start time to {self._audio_stream_start_time}"
+            )
         if self._stt_ch is not None:
             self._stt_ch.send_nowait(frame)
 
@@ -107,6 +109,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
     def update_stt(self, stt: io.STTNode | None) -> None:
         self._stt = stt
         if stt:
+            logger.info(f"Updating STT, resetting audio stream start time at {time.time()}")
             self._audio_stream_start_time = None  # Reset when STT is updated
             self._stt_ch = aio.Chan[rtc.AudioFrame]()
             self._stt_atask = asyncio.create_task(
@@ -155,7 +158,8 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             self._audio_transcript = self._audio_transcript.lstrip()
 
             if hasattr(ev.alternatives[0], "end_time") and ev.alternatives[0].end_time > 0:
-                self._last_transcript_end_time = ev.alternatives[0].end_time
+                current_end_time = ev.alternatives[0].end_time
+                self._last_transcript_end_time = current_end_time
 
             if not self._speaking:
                 if not self._vad:
@@ -232,8 +236,21 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             else:
                 actual_speech_end_time = self._last_speaking_time
 
+            if actual_speech_end_time < self._last_final_transcript_time:
+                # Simple fix till we figure out DG STT flush events. Might inflate latency values for later turns.
+                actual_speech_end_time = self._last_speaking_time
+
             transcription_delay = max(self._last_final_transcript_time - actual_speech_end_time, 0)
             end_of_utterance_delay = max(time.time() - actual_speech_end_time, 0)
+
+            logger.info(
+                f"Debug transcription delay calculation: "
+                f"audio_stream_start={self._audio_stream_start_time}, "
+                f"last_transcript_end_time={self._last_transcript_end_time}, "
+                f"actual_speech_end_time={actual_speech_end_time}, "
+                f"last_final_transcript_time={self._last_final_transcript_time}, "
+                f"last_speaking_time={self._last_speaking_time}"
+            )
 
             eou_metrics = metrics.EOUMetrics(
                 timestamp=time.time(),
