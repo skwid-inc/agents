@@ -63,6 +63,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         self._audio_transcript = ""
         self._last_language: str | None = None
         self._audio_stream_start_time: float | None = None
+        self._audio_stream_start_time_history: list[float] = []
         self._last_transcript_end_time: float = 0
         self._vad_graph = tracing.Tracing.add_graph(
             title="vad",
@@ -87,7 +88,10 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
     def push_audio(self, frame: rtc.AudioFrame) -> None:
         if self._audio_stream_start_time is None:
             self._audio_stream_start_time = time.time()
-
+            self._audio_stream_start_time_history.append(self._audio_stream_start_time)
+            logger.info(
+                f"Pushing audio, setting audio stream start time to {self._audio_stream_start_time}"
+            )
         if self._stt_ch is not None:
             self._stt_ch.send_nowait(frame)
 
@@ -107,6 +111,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
     def update_stt(self, stt: io.STTNode | None) -> None:
         self._stt = stt
         if stt:
+            logger.info(f"Updating STT, resetting audio stream start time at {time.time()}")
             self._audio_stream_start_time = None  # Reset when STT is updated
             self._stt_ch = aio.Chan[rtc.AudioFrame]()
             self._stt_atask = asyncio.create_task(
@@ -155,7 +160,8 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             self._audio_transcript = self._audio_transcript.lstrip()
 
             if hasattr(ev.alternatives[0], "end_time") and ev.alternatives[0].end_time > 0:
-                self._last_transcript_end_time = ev.alternatives[0].end_time
+                current_end_time = ev.alternatives[0].end_time
+                self._last_transcript_end_time = current_end_time
 
             if not self._speaking:
                 if not self._vad:
@@ -229,11 +235,40 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                 actual_speech_end_time = (
                     self._audio_stream_start_time + self._last_transcript_end_time
                 )
+                if (
+                    actual_speech_end_time > self._last_final_transcript_time
+                    and len(self._audio_stream_start_time_history) > 1
+                ):
+                    # We are using the latest STT flush timestamp to calculate the actual speech end time for an old event.
+                    actual_speech_end_time = (
+                        self._audio_stream_start_time_history[-2] + self._last_transcript_end_time
+                    )
+                    logger.info(
+                        f"Adjusting STT speech end time to {actual_speech_end_time} because it's greater than {self._last_final_transcript_time}"
+                    )
+
+                logger.info(f"speech end time from STT: {actual_speech_end_time}")
             else:
+                actual_speech_end_time = self._last_speaking_time
+
+            if actual_speech_end_time > self._last_final_transcript_time:
+                # Fallback to event from VAD if STT event is not available.
+                logger.info(
+                    f"Adjusting actual speech end time to {self._last_speaking_time} because it's less than {self._last_final_transcript_time}"
+                )
                 actual_speech_end_time = self._last_speaking_time
 
             transcription_delay = max(self._last_final_transcript_time - actual_speech_end_time, 0)
             end_of_utterance_delay = max(time.time() - actual_speech_end_time, 0)
+
+            logger.info(
+                f"Debug transcription delay calculation: "
+                f"audio_stream_start={self._audio_stream_start_time}, "
+                f"last_transcript_end_time={self._last_transcript_end_time}, "
+                f"actual_speech_end_time={actual_speech_end_time}, "
+                f"last_final_transcript_time={self._last_final_transcript_time}, "
+                f"last_speaking_time={self._last_speaking_time}"
+            )
 
             eou_metrics = metrics.EOUMetrics(
                 timestamp=time.time(),
