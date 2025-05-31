@@ -63,6 +63,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         self._audio_transcript = ""
         self._last_language: str | None = None
         self._audio_stream_start_time: float | None = None
+        self._audio_stream_start_time_history: list[float] = []
         self._last_transcript_end_time: float = 0
         self._vad_graph = tracing.Tracing.add_graph(
             title="vad",
@@ -87,6 +88,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
     def push_audio(self, frame: rtc.AudioFrame) -> None:
         if self._audio_stream_start_time is None:
             self._audio_stream_start_time = time.time()
+            self._audio_stream_start_time_history.append(self._audio_stream_start_time)
             logger.info(
                 f"Pushing audio, setting audio stream start time to {self._audio_stream_start_time}"
             )
@@ -233,11 +235,27 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                 actual_speech_end_time = (
                     self._audio_stream_start_time + self._last_transcript_end_time
                 )
+                if (
+                    actual_speech_end_time > self._last_final_transcript_time
+                    and len(self._audio_stream_start_time_history) > 1
+                ):
+                    # We are using the latest STT flush timestamp to calculate the actual speech end time for an old event.
+                    actual_speech_end_time = (
+                        self._audio_stream_start_time_history[-2] + self._last_transcript_end_time
+                    )
+                    logger.info(
+                        f"Adjusting STT speech end time to {actual_speech_end_time} because it's greater than {self._last_final_transcript_time}"
+                    )
+
+                logger.info(f"speech end time from STT: {actual_speech_end_time}")
             else:
                 actual_speech_end_time = self._last_speaking_time
 
-            if actual_speech_end_time < self._last_final_transcript_time:
-                # Simple fix till we figure out DG STT flush events. Might inflate latency values for later turns.
+            if actual_speech_end_time > self._last_final_transcript_time:
+                # Fallback to event from VAD if STT event is not available.
+                logger.info(
+                    f"Adjusting actual speech end time to {self._last_speaking_time} because it's less than {self._last_final_transcript_time}"
+                )
                 actual_speech_end_time = self._last_speaking_time
 
             transcription_delay = max(self._last_final_transcript_time - actual_speech_end_time, 0)
