@@ -202,26 +202,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             self._audio_transcript = self._audio_transcript.lstrip()
 
             if hasattr(ev.alternatives[0], "end_time") and ev.alternatives[0].end_time > 0:
-                current_end_time = ev.alternatives[0].end_time
-
-                # # Detect Deepgram flush: cursor reset when timestamp decreases.
-                # # Allow a small negative tolerance to account for floating errors.
-                # if current_end_time + 0.01 < self._last_transcript_end_time:
-                #     # Estimate the wall-clock start time for the new cursor by
-                #     # backing off the current end_time from the time we just
-                #     # received the transcript.
-                #     new_start_time = self._last_final_transcript_time - current_end_time
-                #     self._audio_stream_start_time = new_start_time
-                #     self._audio_stream_start_time_history.append(new_start_time)
-                #     # Limit history size to avoid unbounded growth.
-                #     if len(self._audio_stream_start_time_history) > 20:
-                #         self._audio_stream_start_time_history.pop(0)
-                #     logger.info(
-                #         "Detected STT timestamp reset; updating audio stream start time to %s",
-                #         new_start_time,
-                #     )
-
-                self._last_transcript_end_time = current_end_time
+                self._last_transcript_end_time = ev.alternatives[0].end_time
 
             if not self._speaking:
                 if not self._vad:
