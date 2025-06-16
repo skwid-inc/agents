@@ -62,9 +62,6 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         self._last_final_transcript_time: float = 0
         self._audio_transcript = ""
         self._last_language: str | None = None
-        self._audio_stream_start_time: float | None = None
-        self._audio_stream_start_time_history: list[float] = []
-        self._last_transcript_end_time: float = 0
         self._vad_graph = tracing.Tracing.add_graph(
             title="vad",
             x_label="time",
@@ -86,12 +83,6 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         self.update_vad(None)
 
     def push_audio(self, frame: rtc.AudioFrame) -> None:
-        if self._audio_stream_start_time is None:
-            self._audio_stream_start_time = time.time()
-            self._audio_stream_start_time_history.append(self._audio_stream_start_time)
-            logger.info(
-                f"Pushing audio, setting audio stream start time to {self._audio_stream_start_time}"
-            )
         if self._stt_ch is not None:
             self._stt_ch.send_nowait(frame)
 
@@ -111,8 +102,6 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
     def update_stt(self, stt: io.STTNode | None) -> None:
         self._stt = stt
         if stt:
-            logger.info(f"Updating STT, resetting audio stream start time at {time.time()}")
-            self._audio_stream_start_time = None  # Reset when STT is updated
             self._stt_ch = aio.Chan[rtc.AudioFrame]()
             self._stt_atask = asyncio.create_task(
                 self._stt_task(stt, self._stt_ch, self._stt_atask)
@@ -133,53 +122,6 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             self._vad_atask.cancel()
             self._vad_atask = None
             self._vad_ch = None
-
-    # Heuristically compute the absolute speech end timestamp using STT data
-    def _estimate_actual_speech_end_time(self) -> float:
-        """Return the wall-clock time when the user stopped speaking.
-
-        Preference order:
-        1) Use STT end-word timestamps combined with the correct audio stream
-           start time.
-        2) Fall back to VAD-based timestamp when STT data is insufficient.
-        """
-
-        # Require both an STT timestamp and at least one stream start time.
-        if self._last_transcript_end_time > 0 and self._audio_stream_start_time_history:
-            # Iterate from the most recent stream start backwards so that we
-            # pick the latest plausible one.
-            for start_time in reversed(self._audio_stream_start_time_history):
-                candidate = start_time + self._last_transcript_end_time
-
-                # The transcript must finish before it is emitted.
-                if candidate > self._last_final_transcript_time:
-                    continue
-
-                # The latency between speech end and transcript arrival should
-                # be reasonable.
-                if (self._last_final_transcript_time - candidate) > 1.2:
-                    continue
-
-                # Candidate should not be significantly earlier than VAD-based
-                # estimate (>1 s difference).
-                if abs(candidate - self._last_speaking_time) > 1.0:
-                    continue
-
-                return candidate
-
-        # Log candidates and fallback decision.
-        if self._audio_stream_start_time_history and self._last_transcript_end_time > 0:
-            failed_candidates: list[float] = [
-                start + self._last_transcript_end_time
-                for start in self._audio_stream_start_time_history
-            ]
-            logger.info(
-                "STT candidates failed plausibility checks, falling back to VAD. candidates=%s",
-                failed_candidates,
-            )
-
-        # Absolute fallback to VAD measurement.
-        return self._last_speaking_time
 
     async def _on_stt_event(self, ev: stt.SpeechEvent) -> None:
         if ev.type == stt.SpeechEventType.FINAL_TRANSCRIPT:
@@ -205,9 +147,6 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             self._last_final_transcript_time = time.time()
             self._audio_transcript += f" {transcript}"
             self._audio_transcript = self._audio_transcript.lstrip()
-
-            if hasattr(ev.alternatives[0], "end_time") and ev.alternatives[0].end_time > 0:
-                self._last_transcript_end_time = ev.alternatives[0].end_time
 
             if not self._speaking:
                 if not self._vad:
@@ -276,23 +215,18 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
 
             tracing.Tracing.log_event("end of user turn", {"transcript": self._audio_transcript})
 
-            actual_speech_end_time = self._estimate_actual_speech_end_time()
-            transcription_delay = max(self._last_final_transcript_time - actual_speech_end_time, 0)
-            end_of_utterance_delay = max(time.time() - actual_speech_end_time, 0)
-
             logger.info(
-                f"Debug transcription delay calculation: "
-                f"audio_stream_start={self._audio_stream_start_time}, "
-                f"last_transcript_end_time={self._last_transcript_end_time}, "
-                f"actual_speech_end_time={actual_speech_end_time}, "
+                f"Debug eou calculation: "
                 f"last_final_transcript_time={self._last_final_transcript_time}, "
                 f"last_speaking_time_vad={self._last_speaking_time}"
             )
 
             eou_metrics = metrics.EOUMetrics(
                 timestamp=time.time(),
-                end_of_utterance_delay=end_of_utterance_delay,
-                transcription_delay=transcription_delay,
+                end_of_utterance_delay=time.time() - self._last_speaking_time,
+                transcription_delay=max(
+                    self._last_final_transcript_time - self._last_speaking_time, 0
+                ),
             )
             self.emit("metrics_collected", eou_metrics)
             await self._hooks.on_end_of_turn(self._audio_transcript)
