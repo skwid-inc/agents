@@ -179,7 +179,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                 failed_candidates,
             )
 
-        return self._last_final_transcript_time
+        return self._last_speaking_time
 
     async def _on_stt_event(self, ev: stt.SpeechEvent) -> None:
         if ev.type == stt.SpeechEventType.FINAL_TRANSCRIPT:
