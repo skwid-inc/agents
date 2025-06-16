@@ -214,7 +214,6 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             )
 
             tracing.Tracing.log_event("end of user turn", {"transcript": self._audio_transcript})
-
             eou_metrics = metrics.EOUMetrics(
                 timestamp=time.time(),
                 end_of_utterance_delay=time.time() - self._last_speaking_time,
