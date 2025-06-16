@@ -168,17 +168,6 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                 failed_candidates,
             )
 
-        # Log candidates and fallback decision.
-        if self._audio_stream_start_time_history and self._last_transcript_end_time > 0:
-            failed_candidates: list[float] = [
-                start + self._last_transcript_end_time
-                for start in self._audio_stream_start_time_history
-            ]
-            logger.info(
-                "STT candidates failed plausibility checks, excluding turn. candidates=%s",
-                failed_candidates,
-            )
-
         return self._last_speaking_time
 
     async def _on_stt_event(self, ev: stt.SpeechEvent) -> None:
