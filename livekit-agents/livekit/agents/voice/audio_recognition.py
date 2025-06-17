@@ -135,6 +135,10 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             self._vad_ch = None
 
     def _estimate_actual_speech_end_time(self) -> float:
+        # This is the wall clock time in epoch seconds when the user stopped speaking.
+        # This is calculated by adding the time of the last transcript end time(DG clock) with the
+        # audio stream start time (wall clock).
+        # Ex: 8s + 1750184202.385735 = 1750184210.385735
         return self._last_transcript_end_time + self._audio_stream_start_time
 
     async def _on_stt_event(self, ev: stt.SpeechEvent) -> None:
@@ -236,6 +240,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             transcription_delay = max(self._last_final_transcript_time - actual_speech_end_time, 0)
             end_of_utterance_delay = max(time.time() - actual_speech_end_time, 0)
 
+            # These are just debugging logs to help us understand the flow of the code. Not used anywhere.
             logger.info(
                 f"Debug transcription delay calculation: "
                 f"audio_stream_start={self._audio_stream_start_time},"
@@ -246,6 +251,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                 f"stream history: {self._audio_stream_start_time_history}"
             )
 
+            # These numbers are emitted to taylor fresh and used to calculate the turn latency.
             eou_metrics = metrics.EOUMetrics(
                 timestamp=time.time(),
                 end_of_utterance_delay=end_of_utterance_delay,
