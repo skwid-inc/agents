@@ -134,41 +134,8 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             self._vad_atask = None
             self._vad_ch = None
 
-    # Heuristically compute the absolute speech end timestamp using STT data
     def _estimate_actual_speech_end_time(self) -> float:
-        """Return the wall-clock time when the user stopped speaking.
-
-        Preference order:
-        1) Use STT end-word timestamps combined with the correct audio stream
-           start time.
-        2) Fall back to VAD-based timestamp when STT data is insufficient.
-        """
-
-        # Require both an STT timestamp and at least one stream start time.
-        if self._last_transcript_end_time > 0 and self._audio_stream_start_time_history:
-            # Iterate from the most recent stream start backwards so that we
-            # pick the latest plausible one.
-            for start_time in reversed(self._audio_stream_start_time_history):
-                candidate = start_time + self._last_transcript_end_time
-
-                # The transcript must finish before it is emitted.
-                if candidate > self._last_final_transcript_time:
-                    continue
-
-                return candidate
-
-        # Log candidates and fallback decision.
-        if self._audio_stream_start_time_history and self._last_transcript_end_time > 0:
-            failed_candidates: list[float] = [
-                start + self._last_transcript_end_time
-                for start in self._audio_stream_start_time_history
-            ]
-            logger.info(
-                "STT candidates failed plausibility checks, falling back to VAD. candidates=%s",
-                failed_candidates,
-            )
-
-        return self._last_speaking_time
+        return self._last_transcript_end_time + self._audio_stream_start_time
 
     async def _on_stt_event(self, ev: stt.SpeechEvent) -> None:
         if ev.type == stt.SpeechEventType.FINAL_TRANSCRIPT:
@@ -271,11 +238,12 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
 
             logger.info(
                 f"Debug transcription delay calculation: "
-                f"audio_stream_start={self._audio_stream_start_time}, "
+                f"audio_stream_start={self._audio_stream_start_time},"
                 f"last_transcript_end_time={self._last_transcript_end_time}, "
                 f"actual_speech_end_time={actual_speech_end_time}, "
                 f"last_final_transcript_time={self._last_final_transcript_time}, "
                 f"last_speaking_time_vad={self._last_speaking_time}"
+                f"stream history: {self._audio_stream_start_time_history}"
             )
 
             eou_metrics = metrics.EOUMetrics(
