@@ -139,6 +139,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         # This is calculated by adding the time of the last transcript end time(DG clock) with the
         # audio stream start time (wall clock).
         # Ex: 8s + 1750184202.385735 = 1750184210.385735
+        # _audio_stream_start_time is set by us above when we receive the first audio frame, it's reset on a Language switch.
         return self._last_transcript_end_time + self._audio_stream_start_time
 
     async def _on_stt_event(self, ev: stt.SpeechEvent) -> None:
@@ -237,6 +238,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             tracing.Tracing.log_event("end of user turn", {"transcript": self._audio_transcript})
 
             actual_speech_end_time = self._estimate_actual_speech_end_time()
+            # _last_final_transcript_time is set by us above when we receive the final transcript from DG
             transcription_delay = max(self._last_final_transcript_time - actual_speech_end_time, 0)
             end_of_utterance_delay = max(time.time() - actual_speech_end_time, 0)
 
