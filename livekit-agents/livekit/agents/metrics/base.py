@@ -72,6 +72,9 @@ class EOUMetrics(BaseModel):
     transcription_delay: float
     """Time taken to obtain the transcript after the end of the user's speech."""
 
+    is_last_transcript_final: bool
+    """Whether the last transcript received was a final transcript (not interim)."""
+
     speech_id: str | None = None
     error: Error | None = None
 
