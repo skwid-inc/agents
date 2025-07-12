@@ -59,12 +59,13 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
 
         self._speaking = False
         self._last_speaking_time: float = 0
-        self._last_final_transcript_time: float = 0
+        self._last_final_transcript_received_time: float = 0
         self._audio_transcript = ""
         self._last_language: str | None = None
+        self._is_last_transcript_final: bool = False
         self._audio_stream_start_time: float | None = None
         self._audio_stream_start_time_history: list[float] = []
-        self._last_transcript_end_time: float = 0
+        self._last_final_transcript_end_time: float = 0
         self._vad_graph = tracing.Tracing.add_graph(
             title="vad",
             x_label="time",
@@ -134,17 +135,10 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             self._vad_atask = None
             self._vad_ch = None
 
-    def _estimate_actual_speech_end_time(self) -> float:
-        # This is the wall clock time in epoch seconds when the user stopped speaking.
-        # This is calculated by adding the time of the last transcript end time(DG clock) with the
-        # audio stream start time (wall clock).
-        # Ex: 8s + 1750184202.385735 = 1750184210.385735
-        # _audio_stream_start_time is set by us above when we receive the first audio frame, it's reset on a Language switch.
-        return self._last_transcript_end_time + self._audio_stream_start_time
-
     async def _on_stt_event(self, ev: stt.SpeechEvent) -> None:
         if ev.type == stt.SpeechEventType.FINAL_TRANSCRIPT:
             self._hooks.on_final_transcript(ev)
+            self._is_last_transcript_final = True
             transcript = ev.alternatives[0].text
             self._last_language = ev.alternatives[0].language
             if not transcript:
@@ -163,12 +157,12 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                 },
             )
 
-            self._last_final_transcript_time = time.time()
+            self._last_final_transcript_received_time = time.time()
             self._audio_transcript += f" {transcript}"
             self._audio_transcript = self._audio_transcript.lstrip()
 
             if hasattr(ev.alternatives[0], "end_time") and ev.alternatives[0].end_time > 0:
-                self._last_transcript_end_time = ev.alternatives[0].end_time
+                self._last_final_transcript_end_time = ev.alternatives[0].end_time
 
             if not self._speaking:
                 if not self._vad:
@@ -183,6 +177,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                 self._run_eou_detection(chat_ctx)
         elif ev.type == stt.SpeechEventType.INTERIM_TRANSCRIPT:
             self._hooks.on_interim_transcript(ev)
+            self._is_last_transcript_final = False
 
     async def _on_vad_event(self, ev: vad.VADEvent) -> None:
         if ev.type == vad.VADEventType.START_OF_SPEECH:
@@ -237,18 +232,23 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
 
             tracing.Tracing.log_event("end of user turn", {"transcript": self._audio_transcript})
 
-            actual_speech_end_time = self._estimate_actual_speech_end_time()
-            # _last_final_transcript_time is set by us above when we receive the final transcript from DG
-            transcription_delay = max(self._last_final_transcript_time - actual_speech_end_time, 0)
-            end_of_utterance_delay = max(time.time() - actual_speech_end_time, 0)
+            # This is the wall clock time in epoch seconds when the user stopped speaking.
+            # This is calculated by adding the time of the last transcript end time(DG clock) with the
+            # audio stream start time (wall clock).
+            # Ex: 8s + 1750184202.385735 = 1750184210.385735
+            # _audio_stream_start_time is set by us above when we receive the first audio frame, it's reset on a Language switch.
+            last_final_transcript_end_wallclock_time = self._last_final_transcript_end_time + (self._audio_stream_start_time or 0)
+            # _last_final_transcript_received_time is set by us above when we receive the final transcript from DG
+            transcription_delay = max(self._last_final_transcript_received_time - last_final_transcript_end_wallclock_time, 0)
+            end_of_utterance_delay = max(time.time() - last_final_transcript_end_wallclock_time, 0)
 
             # These are just debugging logs to help us understand the flow of the code. Not used anywhere.
             logger.info(
                 f"Debug transcription delay calculation: "
                 f"audio_stream_start={self._audio_stream_start_time},"
-                f"last_transcript_end_time={self._last_transcript_end_time}, "
-                f"actual_speech_end_time={actual_speech_end_time}, "
-                f"last_final_transcript_time={self._last_final_transcript_time}, "
+                f"last_final_transcript_end_time={self._last_final_transcript_end_time}, "
+                f"last_final_transcript_wallclock_time={last_final_transcript_end_wallclock_time}, "
+                f"last_final_transcript_received_time={self._last_final_transcript_received_time}, "
                 f"last_speaking_time_vad={self._last_speaking_time}"
                 f"stream history: {self._audio_stream_start_time_history}"
             )
@@ -260,6 +260,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                     timestamp=time.time(),
                     end_of_utterance_delay=end_of_utterance_delay,
                     transcription_delay=transcription_delay,
+                    is_last_transcript_final=self._is_last_transcript_final,
                 )
                 self.emit("metrics_collected", eou_metrics)
             else:
@@ -267,6 +268,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
 
             await self._hooks.on_end_of_turn(self._audio_transcript)
             self._audio_transcript = ""
+            self._is_last_transcript_final = False
 
         if self._end_of_turn_task is not None:
             self._end_of_turn_task.cancel()
