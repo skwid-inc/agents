@@ -307,15 +307,18 @@ class SynthesizeStream(ABC):
             nonlocal audio_duration, ttfb, request_id
 
             if not self._started_time:
+                logger.info("No started time")
                 return
 
             duration = time.perf_counter() - self._started_time
 
             if not self._mtc_pending_texts:
+                logger.info("No pending texts")
                 return
 
             text = self._mtc_pending_texts.pop(0)
             if not text:
+                logger.info("No text")
                 return
 
             metrics = TTSMetrics(
@@ -330,6 +333,7 @@ class SynthesizeStream(ABC):
                 streamed=True,
                 error=None,
             )
+            logger.info(f"Emitting metrics: {metrics}")
             self._tts.emit("metrics_collected", metrics)
 
             audio_duration = 0.0
