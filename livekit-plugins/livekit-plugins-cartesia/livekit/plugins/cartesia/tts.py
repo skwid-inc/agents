@@ -109,6 +109,7 @@ class TTS(tts.TTS):
             base_url (str, optional): The base URL for the Cartesia API. Defaults to "https://api.cartesia.ai".
         """  # noqa: E501
 
+        print(f"TTS init: {model}, {language}, {encoding}, {voice}, {speed}, {emotion}, {sample_rate}, {api_key}, {http_session}, {base_url}")
         super().__init__(
             capabilities=tts.TTSCapabilities(streaming=True),
             sample_rate=sample_rate,

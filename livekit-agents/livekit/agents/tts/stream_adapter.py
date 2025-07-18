@@ -67,6 +67,7 @@ class StreamAdapterWrapper(SynthesizeStream):
         self._sent_stream = sentence_tokenizer.stream()
 
     async def _metrics_monitor_task(self, event_aiter: AsyncIterable[SynthesizedAudio]) -> None:
+        print("Metrics monitor task from stream adapter")
         pass  # do nothing
 
     async def _run(self) -> None:

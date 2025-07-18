@@ -126,6 +126,7 @@ class ChunkedStream(ABC):
         self._metrics_task = asyncio.create_task(
             self._metrics_monitor_task(monitor_aiter), name="TTS._metrics_task"
         )
+        logger.info(f"Created metrics task: {self._metrics_task}")
         self._synthesize_task = asyncio.create_task(self._main_task(), name="TTS._synthesize_task")
         self._synthesize_task.add_done_callback(lambda _: self._event_ch.close())
 
@@ -143,13 +144,14 @@ class ChunkedStream(ABC):
 
     async def _metrics_monitor_task(self, event_aiter: AsyncIterable[SynthesizedAudio]) -> None:
         """Task used to collect metrics"""
-
+        logger.info("Metrics monitor task from chunked stream")
         start_time = time.perf_counter()
         audio_duration = 0.0
         ttfb = -1.0
         request_id = ""
 
         async for ev in event_aiter:
+            logger.info(f"event_aiter: {ev}")
             request_id = ev.request_id
             if ttfb == -1.0:
                 ttfb = time.perf_counter() - start_time
@@ -169,6 +171,7 @@ class ChunkedStream(ABC):
             streamed=False,
             error=None,
         )
+        logger.info(f"Emitting metrics: {metrics}")
         self._tts.emit("metrics_collected", metrics)
 
     async def collect(self) -> rtc.AudioFrame:
@@ -294,11 +297,13 @@ class SynthesizeStream(ABC):
 
     async def _metrics_monitor_task(self, event_aiter: AsyncIterable[SynthesizedAudio]) -> None:
         """Task used to collect metrics"""
+        logger.info("Metrics monitor task from stream")
         audio_duration = 0.0
         ttfb = -1.0
         request_id = ""
 
         def _emit_metrics():
+            logger.info("Emitting metrics")
             nonlocal audio_duration, ttfb, request_id
 
             if not self._started_time:
@@ -333,6 +338,7 @@ class SynthesizeStream(ABC):
             self._started_time = 0
 
         async for ev in event_aiter:
+            logger.info(f"event_aiter: {ev}")
             if ttfb == -1.0:
                 ttfb = time.perf_counter() - self._started_time
 
@@ -347,7 +353,9 @@ class SynthesizeStream(ABC):
 
     def push_text(self, token: str) -> None:
         """Push some text to be synthesized"""
+        logger.info(f"Pushing text: {token}")
         if self._metrics_task is None:
+            logger.info("Creating metrics task")
             self._metrics_task = asyncio.create_task(
                 self._metrics_monitor_task(self._monitor_aiter),
                 name="TTS._metrics_task",
