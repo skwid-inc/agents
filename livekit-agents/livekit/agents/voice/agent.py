@@ -389,7 +389,9 @@ class Agent:
 
             wrapped_tts = activity.tts
 
+            print(f"activity.tts.capabilities.streaming: {activity.tts.capabilities.streaming}")
             if not activity.tts.capabilities.streaming:
+                print("Wrapping TTS in StreamAdapter")
                 wrapped_tts = tts.StreamAdapter(
                     tts=wrapped_tts,
                     sentence_tokenizer=tokenize.blingfire.SentenceTokenizer(retain_format=True),
