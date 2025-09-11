@@ -326,7 +326,8 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                 f"actual_speech_end_time={actual_speech_end_time}, "
                 f"last_final_transcript_time={self._last_final_transcript_time}, "
                 f"last_speaking_time_vad={self._last_speaking_time}, "
-                f"stream history: {self._audio_stream_start_time_history}"
+                f"stream history: {self._audio_stream_start_time_history}.\n"
+                f"audio_transcript={self._audio_transcript}"
             )
 
             # We inject [beep detected] transcripts manually in voice detection. If this type of
