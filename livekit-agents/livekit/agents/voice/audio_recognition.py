@@ -237,6 +237,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             confidence = float(getattr(transcript_alternative, "confidence", 0.0) or 0.0)
             end_time = float(getattr(transcript_alternative, "end_time", 0.0) or 0.0)
             if confidence >= self._interim_conf_threshold and end_time > self._committed_end_time:
+                prev_cursor = self._transcript_cursor_end_time
                 self._transcript_cursor_end_time = end_time
                 self._current_interim_transcript = text
                 self._last_language = getattr(transcript_alternative, "language", self._last_language)
