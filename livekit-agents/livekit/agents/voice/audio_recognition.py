@@ -190,14 +190,11 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
 
             # After a final transcript, expose only the committed transcript
             logger.info(
-                "final transcript processed",
-                extra={
-                    "final_end_time": final_end_time,
-                    "prev_cursor": prev_cursor,
-                    "cursor_delta": final_end_time - prev_cursor,
-                    "committed_end_time": self._committed_end_time,
-                    "committed_transcript": self._committed_transcript,
-                },
+                f"final transcript processed | "
+                f"final_end_time={final_end_time} prev_cursor={prev_cursor} "
+                f"cursor_delta={final_end_time - prev_cursor} "
+                f"committed_end_time={self._committed_end_time} "
+                f"committed_transcript={self._committed_transcript}"
             )
             self._audio_transcript = self._committed_transcript
 
@@ -213,12 +210,9 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                 # Only (re)trigger EOU if this final extends the cursor beyond the threshold
                 will_trigger = (final_end_time - prev_cursor) > self._cursor_match_threshold
                 logger.info(
-                    "eou trigger check (final)",
-                    extra={
-                        "will_trigger": will_trigger,
-                        "threshold": self._cursor_match_threshold,
-                        "cursor_delta": final_end_time - prev_cursor,
-                    },
+                    f"eou trigger check (final) | will_trigger={will_trigger} "
+                    f"threshold={self._cursor_match_threshold} "
+                    f"cursor_delta={final_end_time - prev_cursor}"
                 )
                 if will_trigger:
                     # This hook points to AgentActivity.on_end_of_turn, which triggers
@@ -249,16 +243,11 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                 self._audio_transcript = (self._committed_transcript + " " + self._current_interim_transcript).strip()
 
                 logger.info(
-                    "Confident interim accepted",
-                    extra={
-                        "confidence": confidence,
-                        "end_time": end_time,
-                        "prev_cursor": prev_cursor,
-                        "cursor_end_time": self._transcript_cursor_end_time,
-                        "committed_end_time": self._committed_end_time,
-                        "current_interim_transcript": self._current_interim_transcript,
-                        "audio_transcript": self._audio_transcript,
-                    },
+                    f"confident interim accepted | confidence={confidence} end_time={end_time} "
+                    f"prev_cursor={prev_cursor} cursor_end_time={self._transcript_cursor_end_time} "
+                    f"committed_end_time={self._committed_end_time} "
+                    f"current_interim_transcript={self._current_interim_transcript} "
+                    f"audio_transcript={self._audio_transcript}"
                 )
 
                 # The lines below are commented out because we don't want to trigger EOU
@@ -357,12 +346,9 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             await self._hooks.on_end_of_turn(self._audio_transcript)
             # Reset transcript assembly state for the next utterance
             logger.info(
-                "end_of_turn state reset",
-                extra={
-                    "committed_end_time_before": self._committed_end_time,
-                    "cursor_end_time_before": self._transcript_cursor_end_time,
-                    "buffer_len_before": len(self._audio_transcript),
-                },
+                f"end_of_turn state reset | committed_end_time_before={self._committed_end_time} "
+                f"cursor_end_time_before={self._transcript_cursor_end_time} "
+                f"buffer_len_before={len(self._audio_transcript)}"
             )
             self._audio_transcript = ""
             self._committed_transcript = ""
