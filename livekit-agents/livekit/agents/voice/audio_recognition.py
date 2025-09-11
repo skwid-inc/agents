@@ -65,6 +65,15 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         self._audio_stream_start_time: float | None = None
         self._audio_stream_start_time_history: list[float] = []
         self._last_transcript_end_time: float = 0
+        # Transcript assembly state
+        self._committed_transcript: str = ""
+        self._committed_end_time: float = 0.0
+        self._current_interim_transcript: str = ""
+        # Most recent high-quality (final or high-confidence interim) end_time
+        self._transcript_cursor_end_time: float = 0.0
+        # High-confidence interim threshold and cursor match window (seconds)
+        self._interim_conf_threshold: float = 0.7
+        self._cursor_match_threshold: float = 0.1
         self._vad_graph = tracing.Tracing.add_graph(
             title="vad",
             x_label="time",
@@ -89,9 +98,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         if self._audio_stream_start_time is None:
             self._audio_stream_start_time = time.time()
             self._audio_stream_start_time_history.append(self._audio_stream_start_time)
-            logger.info(
-                f"Pushing audio, setting audio stream start time to {self._audio_stream_start_time}"
-            )
+            logger.info(f"Pushing audio, setting audio stream start time to {self._audio_stream_start_time}")
         if self._stt_ch is not None:
             self._stt_ch.send_nowait(frame)
 
@@ -114,9 +121,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             logger.info(f"Updating STT, resetting audio stream start time at {time.time()}")
             self._audio_stream_start_time = None  # Reset when STT is updated
             self._stt_ch = aio.Chan[rtc.AudioFrame]()
-            self._stt_atask = asyncio.create_task(
-                self._stt_task(stt, self._stt_ch, self._stt_atask)
-            )
+            self._stt_atask = asyncio.create_task(self._stt_task(stt, self._stt_ch, self._stt_atask))
         elif self._stt_atask is not None:
             self._stt_atask.cancel()
             self._stt_atask = None
@@ -126,9 +131,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         self._vad = vad
         if vad:
             self._vad_ch = aio.Chan[rtc.AudioFrame]()
-            self._vad_atask = asyncio.create_task(
-                self._vad_task(vad, self._vad_ch, self._vad_atask)
-            )
+            self._vad_atask = asyncio.create_task(self._vad_task(vad, self._vad_ch, self._vad_atask))
         elif self._vad_atask is not None:
             self._vad_atask.cancel()
             self._vad_atask = None
@@ -139,14 +142,16 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         # This is calculated by adding the time of the last transcript end time(DG clock) with the
         # audio stream start time (wall clock).
         # Ex: 8s + 1750184202.385735 = 1750184210.385735
-        # _audio_stream_start_time is set by us above when we receive the first audio frame, it's reset on a Language switch.
+        # _audio_stream_start_time is set by us above when we receive the first audio frame,
+        # it's reset on a Language switch.
         return self._last_transcript_end_time + self._audio_stream_start_time
 
     async def _on_stt_event(self, ev: stt.SpeechEvent) -> None:
         if ev.type == stt.SpeechEventType.FINAL_TRANSCRIPT:
             self._hooks.on_final_transcript(ev)
-            transcript = ev.alternatives[0].text
-            self._last_language = ev.alternatives[0].language
+            transcript_alternative = ev.alternatives[0]
+            transcript = transcript_alternative.text
+            self._last_language = transcript_alternative.language
             if not transcript:
                 return
 
@@ -164,11 +169,37 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             )
 
             self._last_final_transcript_time = time.time()
-            self._audio_transcript += f" {transcript}"
-            self._audio_transcript = self._audio_transcript.lstrip()
 
-            if hasattr(ev.alternatives[0], "end_time") and ev.alternatives[0].end_time > 0:
-                self._last_transcript_end_time = ev.alternatives[0].end_time
+            final_end_time = float(getattr(transcript_alternative, "end_time", 0.0) or 0.0)
+            prev_cursor = self._transcript_cursor_end_time
+
+            # Commit this final transcript to the committed buffer if it progresses the end_time
+            # If no end_time is provided, commit anyway (cannot compare time coverage)
+            if final_end_time == 0.0 or final_end_time > self._committed_end_time:
+                self._committed_transcript = (self._committed_transcript + " " + transcript).strip()
+                self._committed_end_time = final_end_time
+
+            # Final transcripts supersede any existing interim transcripts
+            if self._current_interim_transcript:
+                self._current_interim_transcript = ""
+
+            # Update cursor and metrics timing
+            if final_end_time > 0.0:
+                self._transcript_cursor_end_time = final_end_time
+                self._last_transcript_end_time = final_end_time
+
+            # After a final transcript, expose only the committed transcript
+            logger.info(
+                "final transcript processed",
+                extra={
+                    "final_end_time": final_end_time,
+                    "prev_cursor": prev_cursor,
+                    "cursor_delta": final_end_time - prev_cursor,
+                    "committed_end_time": self._committed_end_time,
+                    "committed_transcript": self._committed_transcript,
+                },
+            )
+            self._audio_transcript = self._committed_transcript
 
             if not self._speaking:
                 if not self._vad:
@@ -179,10 +210,65 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                     # and using that timestamp for _last_speaking_time
                     self._last_speaking_time = time.time()
 
-                chat_ctx = self._hooks.retrieve_chat_ctx().copy()
-                self._run_eou_detection(chat_ctx)
+                # Only (re)trigger EOU if this final extends the cursor beyond the threshold
+                will_trigger = (final_end_time - prev_cursor) > self._cursor_match_threshold
+                logger.info(
+                    "eou trigger check (final)",
+                    extra={
+                        "will_trigger": will_trigger,
+                        "threshold": self._cursor_match_threshold,
+                        "cursor_delta": final_end_time - prev_cursor,
+                    },
+                )
+                if will_trigger:
+                    # This hook points to AgentActivity.on_end_of_turn, which triggers
+                    # llm generation.
+                    chat_ctx = self._hooks.retrieve_chat_ctx().copy()
+                    self._run_eou_detection(chat_ctx)
         elif ev.type == stt.SpeechEventType.INTERIM_TRANSCRIPT:
             self._hooks.on_interim_transcript(ev)
+            # Allow high-confidence interim to advance the cursor and buffer
+            if not ev.alternatives:
+                return
+            transcript_alternative = ev.alternatives[0]
+            text = getattr(transcript_alternative, "text", "") or ""
+            if not text:
+                return
+            confidence = float(getattr(transcript_alternative, "confidence", 0.0) or 0.0)
+            end_time = float(getattr(transcript_alternative, "end_time", 0.0) or 0.0)
+            if confidence >= self._interim_conf_threshold and end_time > self._committed_end_time:
+                self._transcript_cursor_end_time = end_time
+                self._current_interim_transcript = text
+                self._last_language = getattr(transcript_alternative, "language", self._last_language)
+                # Update metrics timing to reflect latest known end_time
+                if end_time > 0.0:
+                    self._last_transcript_end_time = end_time
+
+                # Rebuild the exposed transcript buffer
+                self._audio_transcript = (self._committed_transcript + " " + self._current_interim_transcript).strip()
+
+                logger.info(
+                    "Confident interim accepted",
+                    extra={
+                        "confidence": confidence,
+                        "end_time": end_time,
+                        "prev_cursor": prev_cursor,
+                        "cursor_end_time": self._transcript_cursor_end_time,
+                        "committed_end_time": self._committed_end_time,
+                        "current_interim_transcript": self._current_interim_transcript,
+                        "audio_transcript": self._audio_transcript,
+                    },
+                )
+
+                # The lines below are commented out because we don't want to trigger EOU
+                # detection on interim transcripts.
+                # EOU detection triggers LLM generation. We only want to trigger EOU detection on final transcripts.
+                # if not self._speaking:
+                #    if not self._vad:
+                #        # Without VAD timestamps, base endpoint on now
+                #        self._last_speaking_time = time.time()
+                #    chat_ctx = self._hooks.retrieve_chat_ctx().copy()
+                #    self._run_eou_detection(chat_ctx)
 
     async def _on_vad_event(self, ev: vad.VADEvent) -> None:
         if ev.type == vad.VADEventType.START_OF_SPEECH:
@@ -242,18 +328,20 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             transcription_delay = max(self._last_final_transcript_time - actual_speech_end_time, 0)
             end_of_utterance_delay = max(time.time() - actual_speech_end_time, 0)
 
-            # These are just debugging logs to help us understand the flow of the code. Not used anywhere.
+            # These logs help understand the flow of the code; not used elsewhere.
             logger.info(
-                f"Debug transcription delay calculation: "
-                f"audio_stream_start={self._audio_stream_start_time},"
+                "Debug transcription delay calculation: "
+                f"audio_stream_start={self._audio_stream_start_time}, "
                 f"last_transcript_end_time={self._last_transcript_end_time}, "
                 f"actual_speech_end_time={actual_speech_end_time}, "
                 f"last_final_transcript_time={self._last_final_transcript_time}, "
-                f"last_speaking_time_vad={self._last_speaking_time}"
+                f"last_speaking_time_vad={self._last_speaking_time}, "
                 f"stream history: {self._audio_stream_start_time_history}"
             )
 
-            # We inject [beep detected] transcripts manually in voice detection. If this type of transcript is found, do not attempt to emit metrics as it will distort EOU/Transcript delay measurements.
+            # We inject [beep detected] transcripts manually in voice detection. If this type of
+            # transcript is found, do not emit metrics as it will distort EOU/Transcript delay
+            # measurements.
             if "[beep detected]" not in self._audio_transcript:
                 # These numbers are emitted to taylor fresh and used to calculate the turn latency.
                 eou_metrics = metrics.EOUMetrics(
@@ -266,7 +354,20 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                 logger.info("Skipping EOU metrics emission for [beep detected] transcript")
 
             await self._hooks.on_end_of_turn(self._audio_transcript)
+            # Reset transcript assembly state for the next utterance
+            logger.info(
+                "end_of_turn state reset",
+                extra={
+                    "committed_end_time_before": self._committed_end_time,
+                    "cursor_end_time_before": self._transcript_cursor_end_time,
+                    "buffer_len_before": len(self._audio_transcript),
+                },
+            )
             self._audio_transcript = ""
+            self._committed_transcript = ""
+            self._committed_end_time = 0.0
+            self._current_interim_transcript = ""
+            self._transcript_cursor_end_time = 0.0
 
         if self._end_of_turn_task is not None:
             self._end_of_turn_task.cancel()
@@ -296,9 +397,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                 await self._on_stt_event(ev)
 
     @utils.log_exceptions(logger=logger)
-    async def _vad_task(
-        self, vad: vad.VAD, audio_input: io.AudioInput, task: asyncio.Task[None] | None
-    ) -> None:
+    async def _vad_task(self, vad: vad.VAD, audio_input: io.AudioInput, task: asyncio.Task[None] | None) -> None:
         if task is not None:
             await aio.cancel_and_wait(task)
 
