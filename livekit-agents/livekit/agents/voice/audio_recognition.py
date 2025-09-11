@@ -190,10 +190,10 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
 
             # After a final transcript, expose only the committed transcript
             logger.info(
-                f"final transcript processed | "
+                f"final transcript processed |\n"
                 f"final_end_time={final_end_time} prev_cursor={prev_cursor} "
-                f"cursor_delta={final_end_time - prev_cursor} "
-                f"committed_end_time={self._committed_end_time} "
+                f"cursor_delta={final_end_time - prev_cursor} \n"
+                f"committed_end_time={self._committed_end_time} \n"
                 f"committed_transcript={self._committed_transcript}"
             )
             self._audio_transcript = self._committed_transcript
@@ -210,8 +210,8 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                 # Only (re)trigger EOU if this final extends the cursor beyond the threshold
                 will_trigger = (final_end_time - prev_cursor) > self._cursor_match_threshold
                 logger.info(
-                    f"eou trigger check (final) | will_trigger={will_trigger} "
-                    f"threshold={self._cursor_match_threshold} "
+                    f"eou trigger check (final) | \nwill_trigger={will_trigger} \n"
+                    f"threshold={self._cursor_match_threshold} \n"
                     f"cursor_delta={final_end_time - prev_cursor}"
                 )
                 if will_trigger:
@@ -243,10 +243,10 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                 self._audio_transcript = (self._committed_transcript + " " + self._current_interim_transcript).strip()
 
                 logger.info(
-                    f"confident interim accepted | confidence={confidence} end_time={end_time} "
-                    f"prev_cursor={prev_cursor} cursor_end_time={self._transcript_cursor_end_time} "
-                    f"committed_end_time={self._committed_end_time} "
-                    f"current_interim_transcript={self._current_interim_transcript} "
+                    f"confident interim accepted | \nconfidence={confidence} end_time={end_time} \n"
+                    f"prev_cursor={prev_cursor} cursor_end_time={self._transcript_cursor_end_time} \n"
+                    f"committed_end_time={self._committed_end_time} \n"
+                    f"current_interim_transcript={self._current_interim_transcript} \n"
                     f"audio_transcript={self._audio_transcript}"
                 )
 
@@ -320,12 +320,12 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
 
             # These logs help understand the flow of the code; not used elsewhere.
             logger.info(
-                "Debug transcription delay calculation: "
-                f"audio_stream_start={self._audio_stream_start_time}, "
-                f"last_transcript_end_time={self._last_transcript_end_time}, "
-                f"actual_speech_end_time={actual_speech_end_time}, "
-                f"last_final_transcript_time={self._last_final_transcript_time}, "
-                f"last_speaking_time_vad={self._last_speaking_time}, "
+                "Debug transcription delay calculation: \n"
+                f"audio_stream_start={self._audio_stream_start_time}, \n"
+                f"last_transcript_end_time={self._last_transcript_end_time}, \n"
+                f"actual_speech_end_time={actual_speech_end_time}, \n"
+                f"last_final_transcript_time={self._last_final_transcript_time}, \n"
+                f"last_speaking_time_vad={self._last_speaking_time}, \n"
                 f"stream history: {self._audio_stream_start_time_history}.\n"
                 f"audio_transcript={self._audio_transcript}"
             )
