@@ -187,6 +187,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             logger.info(
                 f"should_skip_final_transcript: {should_skip_final_transcript}\n"
                 f"last_eou_transcript_cursor: {self._last_eou_transcript_cursor}\n"
+                f"prev_cursor: {prev_cursor}\n"
                 f"final_transcript_end_time: {final_end_time}\n"
                 f"transcript_cursor_delta: {transcript_cursor_delta}\n"
                 f"cursor_match_threshold: {self._cursor_match_threshold}"
@@ -369,9 +370,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             )
             self._audio_transcript = ""
             self._committed_transcript = ""
-            self._committed_end_time = 0.0
             self._current_interim_transcript = ""
-            self._transcript_cursor_end_time = 0.0
 
         if self._end_of_turn_task is not None:
             self._end_of_turn_task.cancel()
