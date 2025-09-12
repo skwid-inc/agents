@@ -71,6 +71,8 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         self._current_interim_transcript: str = ""
         # Most recent high-quality (final or high-confidence interim) end_time
         self._transcript_cursor_end_time: float = 0.0
+        # The end time of the transcript that the user finished speaking on.
+        self._last_eou_transcript_cursor: float = 0.0
         # High-confidence interim threshold and cursor match window (seconds)
         self._interim_conf_threshold: float = 0.7
         self._cursor_match_threshold: float = 0.1
@@ -173,6 +175,25 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             final_end_time = float(getattr(transcript_alternative, "end_time", 0.0) or 0.0)
             prev_cursor = self._transcript_cursor_end_time
 
+            # TODO(eric): 2 cases:
+            # 1. The final transcript did not move the transcipt cursor, but we still want to
+            #    commit it, since new interim is now going to start at the end of the final transcript.
+            # 2. Final transcript arrives after we sent out a LLM request and we want to discard it, because
+            #    the next interim transcript is going to be about the next turn.
+
+            # Skip final transcript if it did not move the transcript cursor beyond the threshold.
+            transcript_cursor_delta = final_end_time - self._last_eou_transcript_cursor
+            should_skip_final_transcript = (transcript_cursor_delta) > self._cursor_match_threshold
+            logger.info(
+                f"should_skip_final_transcript: {should_skip_final_transcript}\n"
+                f"last_eou_transcript_cursor: {self._last_eou_transcript_cursor}\n"
+                f"final_transcript_end_time: {final_end_time}\n"
+                f"transcript_cursor_delta: {transcript_cursor_delta}\n"
+                f"cursor_match_threshold: {self._cursor_match_threshold}"
+            )
+            if should_skip_final_transcript:
+                return
+
             # Commit this final transcript to the committed buffer if it progresses the end_time
             # If no end_time is provided, commit anyway (cannot compare time coverage)
             if final_end_time == 0.0 or final_end_time > self._committed_end_time:
@@ -206,19 +227,10 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                     # the correct way is to ensure STT fires SpeechEventType.END_OF_SPEECH
                     # and using that timestamp for _last_speaking_time
                     self._last_speaking_time = time.time()
-
-                # Only (re)trigger EOU if this final extends the cursor beyond the threshold
-                will_trigger = (final_end_time - prev_cursor) > self._cursor_match_threshold
-                logger.info(
-                    f"eou trigger check (final): will_trigger={will_trigger} \n"
-                    f"threshold={self._cursor_match_threshold} \n"
-                    f"cursor_delta={final_end_time - prev_cursor}"
-                )
-                if will_trigger:
-                    # This hook points to AgentActivity.on_end_of_turn, which triggers
-                    # llm generation.
-                    chat_ctx = self._hooks.retrieve_chat_ctx().copy()
-                    self._run_eou_detection(chat_ctx)
+                # This hook points to AgentActivity.on_end_of_turn, which triggers
+                # llm generation.
+                chat_ctx = self._hooks.retrieve_chat_ctx().copy()
+                self._run_eou_detection(chat_ctx)
         elif ev.type == stt.SpeechEventType.INTERIM_TRANSCRIPT:
             self._hooks.on_interim_transcript(ev)
             # Allow high-confidence interim to advance the cursor and buffer
@@ -246,6 +258,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                     f"confident interim accepted | \nconfidence={confidence} end_time={end_time} \n"
                     f"prev_cursor={prev_cursor} cursor_end_time={self._transcript_cursor_end_time} \n"
                     f"committed_end_time={self._committed_end_time} \n"
+                    f"committed_transcript={self._committed_transcript} \n"
                     f"current_interim_transcript={self._current_interim_transcript} \n"
                     f"audio_transcript={self._audio_transcript}"
                 )
@@ -277,6 +290,8 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             self._speaking = False
             # when VAD fires END_OF_SPEECH, it already waited for the silence_duration
             self._last_speaking_time = time.time() - ev.silence_duration
+
+            self._last_eou_transcript_cursor = self._transcript_cursor_end_time
 
             chat_ctx = self._hooks.retrieve_chat_ctx().copy()
             self._run_eou_detection(chat_ctx)
