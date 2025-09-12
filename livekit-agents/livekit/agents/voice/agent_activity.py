@@ -683,7 +683,7 @@ class AgentActivity(RecognitionHooks):
         #  turn)
         #  - generate a reply to the user input
         logger.info(f"NOTE(eric): LLM generation started on transcript: {new_transcript}")
-        logger.info("chat_ctx: %s", self.chat_ctx.items)
+        logger.info("chat_ctx: %s", self._agent.chat_ctx.items)
         user_message = llm.ChatMessage(role="user", content=[new_transcript])
         if self._turn_detection_mode == "manual":
             await self._agent.on_end_of_turn(self._agent.chat_ctx, user_message, generating_reply=False)
