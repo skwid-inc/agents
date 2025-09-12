@@ -210,7 +210,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                 # Only (re)trigger EOU if this final extends the cursor beyond the threshold
                 will_trigger = (final_end_time - prev_cursor) > self._cursor_match_threshold
                 logger.info(
-                    f"eou trigger check (final) | \nwill_trigger={will_trigger} \n"
+                    f"eou trigger check (final): will_trigger={will_trigger} \n"
                     f"threshold={self._cursor_match_threshold} \n"
                     f"cursor_delta={final_end_time - prev_cursor}"
                 )
@@ -325,6 +325,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                 f"last_transcript_end_time={self._last_transcript_end_time}, \n"
                 f"actual_speech_end_time={actual_speech_end_time}, \n"
                 f"last_final_transcript_time={self._last_final_transcript_time}, \n"
+                f"trasnscript_cursor_end_time={self._transcript_cursor_end_time}, \n"
                 f"last_speaking_time_vad={self._last_speaking_time}, \n"
                 f"stream history: {self._audio_stream_start_time_history}.\n"
                 f"audio_transcript={self._audio_transcript}"
