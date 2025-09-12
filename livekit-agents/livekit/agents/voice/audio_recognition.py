@@ -197,7 +197,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
 
             # Commit this final transcript to the committed buffer if it progresses the end_time
             # If no end_time is provided, commit anyway (cannot compare time coverage)
-            if final_end_time == 0.0 or final_end_time > self._committed_end_time:
+            if final_end_time >= self._committed_end_time:
                 self._committed_transcript = (self._committed_transcript + " " + transcript).strip()
                 self._committed_end_time = final_end_time
 
@@ -287,12 +287,11 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             self._hooks.on_vad_inference_done(ev)
 
         elif ev.type == vad.VADEventType.END_OF_SPEECH:
+            logger.info("NOTE(eric): VAD fired END_OF_SPEECH")
             self._hooks.on_end_of_speech(ev)
             self._speaking = False
             # when VAD fires END_OF_SPEECH, it already waited for the silence_duration
             self._last_speaking_time = time.time() - ev.silence_duration
-
-            self._last_eou_transcript_cursor = self._transcript_cursor_end_time
 
             chat_ctx = self._hooks.retrieve_chat_ctx().copy()
             self._run_eou_detection(chat_ctx)
@@ -305,6 +304,12 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         chat_ctx = chat_ctx.copy()
         chat_ctx.add_message(role="user", content=self._audio_transcript)
         turn_detector = self._turn_detector if self._audio_transcript else None
+
+        prev_cursor = self._last_eou_transcript_cursor
+        self._last_eou_transcript_cursor = self._transcript_cursor_end_time
+        logger.info(
+            f"NOTE(eric): prev_cursor: {prev_cursor} last_eou_transcript_cursor: {self._last_eou_transcript_cursor}"
+        )
 
         @utils.log_exceptions(logger=logger)
         async def _bounce_eou_task() -> None:
@@ -370,6 +375,8 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             )
             self._audio_transcript = ""
             self._committed_transcript = ""
+            self._committed_end_time = 0.0
+            self._transcript_cursor_end_time = 0.0
             self._current_interim_transcript = ""
 
         if self._end_of_turn_task is not None:
