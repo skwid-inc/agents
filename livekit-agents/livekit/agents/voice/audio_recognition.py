@@ -75,7 +75,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         self._last_eou_transcript_cursor: float = 0.0
         # High-confidence interim threshold and cursor match window (seconds)
         self._interim_conf_threshold: float = 0.7
-        self._cursor_match_threshold: float = 0.25
+        self._cursor_match_threshold: float = 0.3
         self._vad_graph = tracing.Tracing.add_graph(
             title="vad",
             x_label="time",
