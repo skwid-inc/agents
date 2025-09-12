@@ -183,16 +183,16 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
 
             # Skip final transcript if it did not move the transcript cursor beyond the threshold.
             transcript_cursor_delta = final_end_time - self._last_eou_transcript_cursor
-            should_skip_final_transcript = (transcript_cursor_delta) > self._cursor_match_threshold
+            should_ignore_final_transcript = (transcript_cursor_delta) <= self._cursor_match_threshold
             logger.info(
-                f"should_skip_final_transcript: {should_skip_final_transcript}\n"
+                f"should_ignore_final_transcript: {should_ignore_final_transcript}\n"
                 f"last_eou_transcript_cursor: {self._last_eou_transcript_cursor}\n"
                 f"prev_cursor: {prev_cursor}\n"
                 f"final_transcript_end_time: {final_end_time}\n"
                 f"transcript_cursor_delta: {transcript_cursor_delta}\n"
                 f"cursor_match_threshold: {self._cursor_match_threshold}"
             )
-            if should_skip_final_transcript:
+            if should_ignore_final_transcript:
                 return
 
             # Commit this final transcript to the committed buffer if it progresses the end_time
