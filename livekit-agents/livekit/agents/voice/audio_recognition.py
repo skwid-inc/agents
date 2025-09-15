@@ -68,7 +68,10 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         # Transcript assembly state
         self._committed_transcript: str = ""
         self._committed_end_time: float = 0.0
-        self._current_interim_transcript: str = ""
+        self._interim_transcript_buffer: str = ""
+        # Most recent confident interim transcript. This variable
+        # is perserved across turns.
+        self._last_confident_interim_transcript: str = ""
         # Most recent high-quality (final or high-confidence interim) end_time
         self._transcript_cursor_end_time: float = 0.0
         # The end time of the transcript that the user finished speaking on.
@@ -184,13 +187,21 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             # Skip final transcript if it did not move the transcript cursor beyond the threshold.
             transcript_cursor_delta = final_end_time - self._last_eou_transcript_cursor
             should_ignore_final_transcript = (transcript_cursor_delta) <= self._cursor_match_threshold
+
+            # Skip transcript if it's exactly the same as the previous interim, and
+            # there was a end of turn event that cleared the interim_transcript_buffer.
+            if self._interim_transcript_buffer == "" and self._interim_transcript_buffer == transcript.strip():
+                should_ignore_final_transcript = True
+
             logger.info(
                 f"should_ignore_final_transcript: {should_ignore_final_transcript}\n"
                 f"last_eou_transcript_cursor: {self._last_eou_transcript_cursor}\n"
                 f"prev_cursor: {prev_cursor}\n"
                 f"final_transcript_end_time: {final_end_time}\n"
                 f"transcript_cursor_delta: {transcript_cursor_delta}\n"
-                f"cursor_match_threshold: {self._cursor_match_threshold}"
+                f"cursor_match_threshold: {self._cursor_match_threshold}\n"
+                f"interim_transcript_buffer: {self._interim_transcript_buffer}\n"
+                f"transcript: {transcript}"
             )
             if should_ignore_final_transcript:
                 return
@@ -202,8 +213,8 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                 self._committed_end_time = final_end_time
 
             # Final transcripts supersede any existing interim transcripts
-            if self._current_interim_transcript:
-                self._current_interim_transcript = ""
+            if self._interim_transcript_buffer:
+                self._interim_transcript_buffer = ""
 
             # Update cursor and metrics timing
             if final_end_time > 0.0:
@@ -246,21 +257,21 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             if confidence >= self._interim_conf_threshold and end_time > self._committed_end_time:
                 prev_cursor = self._transcript_cursor_end_time
                 self._transcript_cursor_end_time = end_time
-                self._current_interim_transcript = text
+                self._interim_transcript_buffer = text
                 self._last_language = getattr(transcript_alternative, "language", self._last_language)
                 # Update metrics timing to reflect latest known end_time
                 if end_time > 0.0:
                     self._last_transcript_end_time = end_time
 
                 # Rebuild the exposed transcript buffer
-                self._audio_transcript = (self._committed_transcript + " " + self._current_interim_transcript).strip()
+                self._audio_transcript = (self._committed_transcript + " " + self._interim_transcript_buffer).strip()
 
                 logger.info(
                     f"confident interim accepted | \nconfidence={confidence} end_time={end_time} \n"
                     f"prev_cursor={prev_cursor} cursor_end_time={self._transcript_cursor_end_time} \n"
                     f"committed_end_time={self._committed_end_time} \n"
                     f"committed_transcript={self._committed_transcript} \n"
-                    f"current_interim_transcript={self._current_interim_transcript} \n"
+                    f"interim_transcript_buffer={self._interim_transcript_buffer} \n"
                     f"audio_transcript={self._audio_transcript}"
                 )
 
@@ -377,7 +388,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             self._committed_transcript = ""
             self._committed_end_time = 0.0
             self._transcript_cursor_end_time = 0.0
-            self._current_interim_transcript = ""
+            self._interim_transcript_buffer = ""
 
         if self._end_of_turn_task is not None:
             self._end_of_turn_task.cancel()
