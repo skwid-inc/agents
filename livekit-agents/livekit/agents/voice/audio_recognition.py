@@ -67,18 +67,11 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         self._last_transcript_end_time: float = 0
         # Transcript assembly state
         self._committed_transcript: str = ""
-        self._committed_end_time: float = 0.0
         self._interim_transcript_buffer: str = ""
-        # Most recent confident interim transcript. This variable
-        # is perserved across turns.
-        self._last_confident_interim_transcript: str = ""
-        # Most recent high-quality (final or high-confidence interim) end_time
-        self._transcript_cursor_end_time: float = 0.0
-        # The end time of the transcript that the user finished speaking on.
-        self._last_eou_transcript_cursor: float = 0.0
+        # Used for final transcript dedupe.
+        self._latest_interim_transcript = ""
         # High-confidence interim threshold and cursor match window (seconds)
         self._interim_conf_threshold: float = 0.7
-        self._cursor_match_threshold: float = 0.3
         self._vad_graph = tracing.Tracing.add_graph(
             title="vad",
             x_label="time",
@@ -175,61 +168,30 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
 
             self._last_final_transcript_time = time.time()
 
-            final_end_time = float(getattr(transcript_alternative, "end_time", 0.0) or 0.0)
-            prev_cursor = self._transcript_cursor_end_time
-
-            # TODO(eric): 2 cases:
-            # 1. The final transcript did not move the transcipt cursor, but we still want to
-            #    commit it, since new interim is now going to start at the end of the final transcript.
-            # 2. Final transcript arrives after we sent out a LLM request and we want to discard it, because
-            #    the next interim transcript is going to be about the next turn.
-
-            # Skip final transcript if it did not move the transcript cursor beyond the threshold.
-            transcript_cursor_delta = final_end_time - self._last_eou_transcript_cursor
-            should_ignore_final_transcript = (transcript_cursor_delta) <= self._cursor_match_threshold
-
-            # Skip transcript if it's exactly the same as the previous interim, and
-            # there was a end of turn event that cleared the interim_transcript_buffer.
-            if self._interim_transcript_buffer == "" and self._interim_transcript_buffer == transcript.strip():
+            # Ignore final transcript if self._interim_transcript_buffer was
+            # empty (only happens after end of turn, i.e., _run_eou_detection), and
+            # The final transcript matches with the previous interim transcript
+            # completely.
+            if len(self._interim_transcript_buffer) == 0 and self._latest_interim_transcript == transcript.strip():
                 should_ignore_final_transcript = True
 
             logger.info(
                 f"should_ignore_final_transcript: {should_ignore_final_transcript}\n"
-                f"last_eou_transcript_cursor: {self._last_eou_transcript_cursor}\n"
-                f"prev_cursor: {prev_cursor}\n"
-                f"final_transcript_end_time: {final_end_time}\n"
-                f"transcript_cursor_delta: {transcript_cursor_delta}\n"
-                f"cursor_match_threshold: {self._cursor_match_threshold}\n"
-                f"interim_transcript_buffer: {self._interim_transcript_buffer}\n"
                 f"transcript: {transcript}"
+                f"latest_interim_transcript: {self._latest_interim_transcript}"
             )
             if should_ignore_final_transcript:
                 return
-
-            # Commit this final transcript to the committed buffer if it progresses the end_time
-            # If no end_time is provided, commit anyway (cannot compare time coverage)
-            if final_end_time >= self._committed_end_time:
-                self._committed_transcript = (self._committed_transcript + " " + transcript).strip()
-                self._committed_end_time = final_end_time
 
             # Final transcripts supersede any existing interim transcripts
             if self._interim_transcript_buffer:
                 self._interim_transcript_buffer = ""
 
-            # Update cursor and metrics timing
-            if final_end_time > 0.0:
-                self._transcript_cursor_end_time = final_end_time
-                self._last_transcript_end_time = final_end_time
-
-            # After a final transcript, expose only the committed transcript
-            logger.info(
-                f"final transcript processed |\n"
-                f"final_end_time={final_end_time} prev_cursor={prev_cursor} "
-                f"cursor_delta={final_end_time - prev_cursor} \n"
-                f"committed_end_time={self._committed_end_time} \n"
-                f"committed_transcript={self._committed_transcript}"
-            )
+            self._committed_transcript = (self._committed_transcript + " " + transcript).strip()
             self._audio_transcript = self._committed_transcript
+
+            if hasattr(ev.alternatives[0], "end_time") and ev.alternatives[0].end_time > 0:
+                self._last_transcript_end_time = ev.alternatives[0].end_time
 
             if not self._speaking:
                 if not self._vad:
@@ -254,10 +216,9 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                 return
             confidence = float(getattr(transcript_alternative, "confidence", 0.0) or 0.0)
             end_time = float(getattr(transcript_alternative, "end_time", 0.0) or 0.0)
-            if confidence >= self._interim_conf_threshold and end_time > self._committed_end_time:
-                prev_cursor = self._transcript_cursor_end_time
-                self._transcript_cursor_end_time = end_time
+            if confidence >= self._interim_conf_threshold:
                 self._interim_transcript_buffer = text
+                self._latest_interim_transcript = text.strip()
                 self._last_language = getattr(transcript_alternative, "language", self._last_language)
                 # Update metrics timing to reflect latest known end_time
                 if end_time > 0.0:
@@ -268,8 +229,6 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
 
                 logger.info(
                     f"confident interim accepted | \nconfidence={confidence} end_time={end_time} \n"
-                    f"prev_cursor={prev_cursor} cursor_end_time={self._transcript_cursor_end_time} \n"
-                    f"committed_end_time={self._committed_end_time} \n"
                     f"committed_transcript={self._committed_transcript} \n"
                     f"interim_transcript_buffer={self._interim_transcript_buffer} \n"
                     f"audio_transcript={self._audio_transcript}"
@@ -316,12 +275,6 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         chat_ctx.add_message(role="user", content=self._audio_transcript)
         turn_detector = self._turn_detector if self._audio_transcript else None
 
-        prev_cursor = self._last_eou_transcript_cursor
-        self._last_eou_transcript_cursor = self._transcript_cursor_end_time
-        logger.info(
-            f"NOTE(eric): prev_cursor: {prev_cursor} last_eou_transcript_cursor: {self._last_eou_transcript_cursor}"
-        )
-
         @utils.log_exceptions(logger=logger)
         async def _bounce_eou_task() -> None:
             endpointing_delay = self._min_endpointing_delay
@@ -357,7 +310,6 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                 f"last_transcript_end_time={self._last_transcript_end_time}, \n"
                 f"actual_speech_end_time={actual_speech_end_time}, \n"
                 f"last_final_transcript_time={self._last_final_transcript_time}, \n"
-                f"trasnscript_cursor_end_time={self._transcript_cursor_end_time}, \n"
                 f"last_speaking_time_vad={self._last_speaking_time}, \n"
                 f"stream history: {self._audio_stream_start_time_history}.\n"
                 f"audio_transcript={self._audio_transcript}"
@@ -378,16 +330,9 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                 logger.info("Skipping EOU metrics emission for [beep detected] transcript")
 
             await self._hooks.on_end_of_turn(self._audio_transcript)
-            # Reset transcript assembly state for the next utterance
-            logger.info(
-                f"end_of_turn state reset | committed_end_time_before={self._committed_end_time} "
-                f"cursor_end_time_before={self._transcript_cursor_end_time} "
-                f"buffer_len_before={len(self._audio_transcript)}"
-            )
+
             self._audio_transcript = ""
             self._committed_transcript = ""
-            self._committed_end_time = 0.0
-            self._transcript_cursor_end_time = 0.0
             self._interim_transcript_buffer = ""
 
         if self._end_of_turn_task is not None:
