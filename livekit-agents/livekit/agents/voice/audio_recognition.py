@@ -172,6 +172,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             # empty (only happens after end of turn, i.e., _run_eou_detection), and
             # The final transcript matches with the previous interim transcript
             # completely.
+            should_ignore_final_transcript = False
             if len(self._interim_transcript_buffer) == 0 and self._latest_interim_transcript == transcript.strip():
                 should_ignore_final_transcript = True
 
