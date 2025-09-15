@@ -182,6 +182,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             #    the next interim transcript is going to be about the next turn.
 
             # Skip final transcript if it did not move the transcript cursor beyond the threshold.
+            """
             transcript_cursor_delta = final_end_time - self._last_eou_transcript_cursor
             should_ignore_final_transcript = (transcript_cursor_delta) <= self._cursor_match_threshold
             logger.info(
@@ -194,16 +195,27 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             )
             if should_ignore_final_transcript:
                 return
+            """
+            # Ignore final transcript if it's exactly the same as the previous interim.
+            should_ignore_final_transcript = transcript.strip() == self._current_interim_transcript
+            logger.info(
+                f"should_ignore_final_transcript: {should_ignore_final_transcript}\n"
+                f"current_interim_transcript: {self._current_interim_transcript}\n"
+                f"new_transcript: {transcript.strip()}\n"
+            )
+
+            # Final transcripts supersede any existing interim transcripts.
+            if self._current_interim_transcript:
+                self._current_interim_transcript = ""
+
+            if should_ignore_final_transcript:
+                return
 
             # Commit this final transcript to the committed buffer if it progresses the end_time
             # If no end_time is provided, commit anyway (cannot compare time coverage)
             if final_end_time >= self._committed_end_time:
                 self._committed_transcript = (self._committed_transcript + " " + transcript).strip()
                 self._committed_end_time = final_end_time
-
-            # Final transcripts supersede any existing interim transcripts
-            if self._current_interim_transcript:
-                self._current_interim_transcript = ""
 
             # Update cursor and metrics timing
             if final_end_time > 0.0:
@@ -377,7 +389,9 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             self._committed_transcript = ""
             self._committed_end_time = 0.0
             self._transcript_cursor_end_time = 0.0
-            self._current_interim_transcript = ""
+            # No longer need to reset interim at end-of-turn because we need it
+            # to do post end-of-turn final transcript de-dupe.
+            # self._current_interim_transcript = ""
 
         if self._end_of_turn_task is not None:
             self._end_of_turn_task.cancel()
