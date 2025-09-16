@@ -49,6 +49,15 @@ class Agent:
         self._vad = vad
         self._allow_interruptions = allow_interruptions
         self._activity: AgentActivity | None = None
+        self._force_final_transcript: False
+
+    @property
+    def should_force_final_transcript(self) -> bool:
+        """
+        Returns:
+            bool: Whether the agent should be forced to use the final transcript.
+        """
+        return self._force_final_transcript
 
     @property
     def instructions(self) -> str:
@@ -345,15 +354,11 @@ class Agent:
 
         tool_choice = model_settings.tool_choice if model_settings else NOT_GIVEN
 
-        async with activity.llm.chat(
-            chat_ctx=chat_ctx, tools=tools, tool_choice=tool_choice
-        ) as stream:
+        async with activity.llm.chat(chat_ctx=chat_ctx, tools=tools, tool_choice=tool_choice) as stream:
             async for chunk in stream:
                 yield chunk
 
-    async def transcription_node(
-        self, text: AsyncIterable[str], model_settings: ModelSettings
-    ) -> AsyncIterable[str]:
+    async def transcription_node(self, text: AsyncIterable[str], model_settings: ModelSettings) -> AsyncIterable[str]:
         """
         A node in the processing pipeline that finalizes transcriptions from text segments.
 
@@ -401,9 +406,7 @@ class Agent:
         wrapped_tts = activity.tts
 
         if not activity.tts.capabilities.streaming:
-            wrapped_tts = tts.StreamAdapter(
-                tts=wrapped_tts, sentence_tokenizer=tokenize.basic.SentenceTokenizer()
-            )
+            wrapped_tts = tts.StreamAdapter(tts=wrapped_tts, sentence_tokenizer=tokenize.basic.SentenceTokenizer())
 
         async with wrapped_tts.stream() as stream:
 
@@ -522,9 +525,7 @@ class _InlineTaskInfo:
     function_call: llm.FunctionCall | None
 
 
-def _authorize_inline_task(
-    task: asyncio.Task, *, function_call: llm.FunctionCall | None = None
-) -> None:
+def _authorize_inline_task(task: asyncio.Task, *, function_call: llm.FunctionCall | None = None) -> None:
     setattr(task, "__livekit_agents_inline_task", _InlineTaskInfo(function_call=function_call))
 
 

@@ -143,9 +143,7 @@ class FunctionCallOutput(BaseModel):
     is_error: bool
 
 
-ChatItem = Annotated[
-    Union[ChatMessage, FunctionCall, FunctionCallOutput], Field(discriminator="type")
-]
+ChatItem = Annotated[Union[ChatMessage, FunctionCall, FunctionCallOutput], Field(discriminator="type")]
 
 
 class ChatContext:
@@ -159,6 +157,51 @@ class ChatContext:
     @property
     def items(self) -> list[ChatItem]:
         return self._items
+
+    def is_previous_message_user_role(self) -> bool:
+        """
+        Return True if the latest effective message in the context is from the user.
+
+        An empty assistant message (placeholder during streaming) is ignored when
+        determining the latest effective message. In that case, the function
+        inspects the previous item and returns True if it is a user message.
+        """
+        if len(self._items) > 0:
+            if self._items[-1].role == "user":
+                return True
+        if len(self._items) > 1:
+            if self._items[-1].role == "assistant" and (
+                len(self._items[-1].content) == 0 or self._items[-1].content[0] == ""
+            ):
+                if self._items[-2].role == "user":
+                    return True
+        return False
+
+    def maybe_delete_latest_user_interim_message(self) -> bool:
+        """
+        Remove the most recent interim user message from the chat context.
+
+        - If the last item is a user message, delete it.
+        - Else, if the last item is an empty assistant message and the item
+          before it is a user message, delete both.
+
+        This is used to replace an interim user transcript with an updated
+        transcript before issuing a new LLM call.
+
+        Returns True if deleted, False otherwise
+        """
+        if len(self._items) > 0 and self._items[-1].role == "user":
+            del self._items[-1]
+            return True
+        elif (
+            len(self._items) > 0
+            and self._items[-1].role == "assistant"
+            and (len(self._items[-1].content) == 0 or len(self._items[-1].content[0]) == 0)
+        ):
+            if len(self._items) > 1 and self._items[-2].role == "user":
+                del self._items[-2:]
+                return True
+        return False
 
     def add_message(
         self,
@@ -200,9 +243,7 @@ class ChatContext:
 
         valid_tools = set()
         if is_given(tools):
-            valid_tools = {
-                tool if isinstance(tool, str) else get_function_info(tool).name for tool in tools
-            }
+            valid_tools = {tool if isinstance(tool, str) else get_function_info(tool).name for tool in tools}
 
         for item in self.items:
             if exclude_function_call and item.type in [
