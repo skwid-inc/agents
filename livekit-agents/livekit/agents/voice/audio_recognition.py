@@ -268,8 +268,9 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         self._current_llm_transcript_type_sent_to_llm = self._most_recent_transcript_type
 
         logger.info(
-            f"previous_transcript_type_sent_to_llm: {self._previous_transcript_type_sent_to_llm}\n"
-            f"current_llm_transcript_type_sent_to_llm: {self._current_llm_transcript_type_sent_to_llm}"
+            f"\nprevious_transcript_type_sent_to_llm: {self._previous_transcript_type_sent_to_llm}\n"
+            f"current_llm_transcript_type_sent_to_llm: {self._current_llm_transcript_type_sent_to_llm}\n"
+            f"previous_transcript_sent_to_llm: {self._previous_transcript_sent_to_llm}\n"
         )
 
         # The algorithm below describes the process of leveraging interim transcripts
