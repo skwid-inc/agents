@@ -67,6 +67,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         self._previous_committed_final_transcript = ""
         self._current_interim_transcript = ""
         self._interim_conf_threshold: float = 0.7
+        self._pending_last_message_id: str | None = None
 
         self._speaking = False
         self._last_speaking_time: float = 0
@@ -267,8 +268,21 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         self._previous_transcript_type_sent_to_llm = self._current_llm_transcript_type_sent_to_llm
         self._current_llm_transcript_type_sent_to_llm = self._most_recent_transcript_type
 
+        last_message_id = chat_ctx.get_last_message_id()
+        # This value is set to True if either: 1) The previous message
+        # is a user message, or if there is a user message pending
+        # and not yet committed to chat_ctx.
+        should_consider_skipping_llm_call = False
+        if chat_ctx.is_previous_message_user_role() or (
+            last_message_id is not None and last_message_id == self._pending_last_message_id
+        ):
+            should_consider_skipping_llm_call = True
+
         logger.info(
-            f"\nprevious_transcript_type_sent_to_llm: {self._previous_transcript_type_sent_to_llm}\n"
+            f"last_message_id: {last_message_id}\n"
+            f"should_consider_skipping_llm_call: {should_consider_skipping_llm_call}\n"
+            f"pending_last_message_id: {self._pending_last_message_id}\n"
+            f"previous_transcript_type_sent_to_llm: {self._previous_transcript_type_sent_to_llm}\n"
             f"current_llm_transcript_type_sent_to_llm: {self._current_llm_transcript_type_sent_to_llm}\n"
             f"previous_transcript_sent_to_llm: {self._previous_transcript_sent_to_llm}\n"
         )
@@ -291,7 +305,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         # Note that this optimization should be skipped entirely if should_force_final_transcript is set to True.
         #   This is because we won't be deleting any interims.
         if (
-            chat_ctx.is_previous_message_user_role()
+            should_consider_skipping_llm_call
             and self._previous_transcript_type_sent_to_llm == SpeechEventType.INTERIM_TRANSCRIPT
             and not self._hooks._agent.should_force_final_transcript
         ):
@@ -334,6 +348,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             f"_current_interim_transcript: {self._current_interim_transcript}\n"
         )
         self._previous_transcript_sent_to_llm = self._audio_transcript
+        self._pending_last_message_id = last_message_id
 
         chat_ctx = chat_ctx.copy()
         chat_ctx.add_message(role="user", content=self._audio_transcript)

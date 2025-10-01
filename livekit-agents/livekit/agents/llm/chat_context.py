@@ -158,6 +158,11 @@ class ChatContext:
     def items(self) -> list[ChatItem]:
         return self._items
 
+    def get_last_message_id(self) -> str | None:
+        if len(self._items) > 0:
+            return self._items[-1].id
+        return None
+
     def is_previous_message_user_role(self) -> bool:
         """
         Return True if the latest effective message in the context is from the user.
