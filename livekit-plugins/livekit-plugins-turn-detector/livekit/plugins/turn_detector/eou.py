@@ -63,9 +63,7 @@ class _EUORunner(_InferenceRunner):
                 revision=MODEL_REVISION,
                 local_files_only=True,
             )
-            self._session = ort.InferenceSession(
-                local_path_onnx, providers=["CPUExecutionProvider"]
-            )
+            self._session = ort.InferenceSession(local_path_onnx, providers=["CPUExecutionProvider"])
 
             self._tokenizer = AutoTokenizer.from_pretrained(
                 HG_MODEL,
@@ -135,9 +133,7 @@ class EOUModel:
         return await self.predict_end_of_turn(chat_ctx)
 
     # our EOU model inference should be fast, 3 seconds is more than enough
-    async def predict_end_of_turn(
-        self, chat_ctx: llm.ChatContext, *, timeout: float | None = 3
-    ) -> float:
+    async def predict_end_of_turn(self, chat_ctx: llm.ChatContext, *, timeout: float | None = 3) -> float:
         messages = []
 
         for item in chat_ctx.items:
@@ -169,7 +165,8 @@ class EOUModel:
         assert result is not None, "end_of_utterance prediction should always returns a result"
 
         result_json = json.loads(result.decode())
-        logger.debug(
+        logger.info(f"eou_prediction result: {result.decode()}")
+        logger.info(
             "eou prediction",
             extra=result_json,
         )
