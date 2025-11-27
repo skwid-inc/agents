@@ -93,7 +93,10 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         if self._audio_stream_start_time is None:
             self._audio_stream_start_time = time.time()
             self._audio_stream_start_time_history.append(self._audio_stream_start_time)
-            logger.warning("eou_prediction Pushing audio, setting stream start time")
+            logger.warning(
+                f"eou_prediction Pushing audio, stt_ch={'exists' if self._stt_ch else 'None'}, "
+                f"vad_ch={'exists' if self._vad_ch else 'None'}"
+            )
         if self._stt_ch is not None:
             self._stt_ch.send_nowait(frame)
 
@@ -145,6 +148,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         return self._last_transcript_end_time + self._audio_stream_start_time
 
     async def _on_stt_event(self, ev: stt.SpeechEvent) -> None:
+        logger.warning(f"eou_prediction STT event received: type={ev.type}")
         if ev.type == stt.SpeechEventType.FINAL_TRANSCRIPT:
             self._hooks.on_final_transcript(ev)
             transcript = ev.alternatives[0].text
@@ -188,6 +192,9 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                 chat_ctx = self._hooks.retrieve_chat_ctx().copy()
                 self._run_eou_detection(chat_ctx)
         elif ev.type == stt.SpeechEventType.INTERIM_TRANSCRIPT:
+            logger.warning(
+                f"eou_prediction INTERIM_TRANSCRIPT: text='{ev.alternatives[0].text if ev.alternatives else 'N/A'}'"
+            )
             self._hooks.on_interim_transcript(ev)
 
     async def _on_vad_event(self, ev: vad.VADEvent) -> None:
@@ -307,6 +314,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         audio_input: io.AudioInput,
         task: asyncio.Task[None] | None,
     ) -> None:
+        logger.warning("eou_prediction _stt_task started")
         if task is not None:
             await aio.cancel_and_wait(task)
 
@@ -315,15 +323,21 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             node = await node
 
         if node is None:
+            logger.warning("eou_prediction _stt_task: node is None, exiting")
             return
 
+        logger.warning(f"eou_prediction _stt_task: node created, type={type(node)}")
         if isinstance(node, AsyncIterable):
+            logger.warning("eou_prediction _stt_task: starting to iterate over STT events")
             async for ev in node:
                 assert isinstance(ev, stt.SpeechEvent), "STT node must yield SpeechEvent"
                 await self._on_stt_event(ev)
+        else:
+            logger.warning(f"eou_prediction _stt_task: node is not AsyncIterable, type={type(node)}")
 
     @utils.log_exceptions(logger=logger)
     async def _vad_task(self, vad: vad.VAD, audio_input: io.AudioInput, task: asyncio.Task[None] | None) -> None:
+        logger.warning("eou_prediction _vad_task started")
         if task is not None:
             await aio.cancel_and_wait(task)
 
@@ -337,6 +351,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         forward_task = asyncio.create_task(_forward())
 
         try:
+            logger.warning("eou_prediction _vad_task: starting to iterate over VAD events")
             async for ev in stream:
                 await self._on_vad_event(ev)
         finally:
