@@ -180,7 +180,11 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             if hasattr(ev.alternatives[0], "end_time") and ev.alternatives[0].end_time > 0:
                 self._last_transcript_end_time = ev.alternatives[0].end_time
 
+            logger.warning(
+                f"eou_prediction FINAL_TRANSCRIPT check: speaking={self._speaking}, vad={self._vad is not None}"
+            )
             if not self._speaking:
+                logger.warning("eou_prediction FINAL_TRANSCRIPT: not speaking, calling _run_eou_detection")
                 if not self._vad:
                     # vad disabled, use stt timestamp
                     # TODO: this would screw up transcription latency metrics
@@ -191,6 +195,8 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
 
                 chat_ctx = self._hooks.retrieve_chat_ctx().copy()
                 self._run_eou_detection(chat_ctx)
+            else:
+                logger.warning("eou_prediction FINAL_TRANSCRIPT: still speaking, skipping _run_eou_detection")
         elif ev.type == stt.SpeechEventType.INTERIM_TRANSCRIPT:
             logger.warning(
                 f"eou_prediction INTERIM_TRANSCRIPT: text='{ev.alternatives[0].text if ev.alternatives else 'N/A'}'"
@@ -198,6 +204,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             self._hooks.on_interim_transcript(ev)
 
     async def _on_vad_event(self, ev: vad.VADEvent) -> None:
+        logger.warning(f"eou_prediction VAD event received: type={ev.type}, speaking={self._speaking}")
         if ev.type == vad.VADEventType.START_OF_SPEECH:
             logger.warning("eou_prediction VAD START_OF_SPEECH")
             self._hooks.on_start_of_speech(ev)
@@ -207,6 +214,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                 self._end_of_turn_task.cancel()
 
         elif ev.type == vad.VADEventType.INFERENCE_DONE:
+            logger.warning(f"eou_prediction VAD INFERENCE_DONE: probability={ev.probability}")
             self._vad_graph.plot(ev.timestamp, ev.probability)
             self._hooks.on_vad_inference_done(ev)
 
@@ -329,9 +337,18 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         logger.warning(f"eou_prediction _stt_task: node created, type={type(node)}")
         if isinstance(node, AsyncIterable):
             logger.warning("eou_prediction _stt_task: starting to iterate over STT events")
-            async for ev in node:
-                assert isinstance(ev, stt.SpeechEvent), "STT node must yield SpeechEvent"
-                await self._on_stt_event(ev)
+            event_count = 0
+            try:
+                async for ev in node:
+                    event_count += 1
+                    logger.warning(f"eou_prediction _stt_task: received event #{event_count}, type={ev.type}")
+                    assert isinstance(ev, stt.SpeechEvent), "STT node must yield SpeechEvent"
+                    await self._on_stt_event(ev)
+            except Exception as e:
+                logger.warning(f"eou_prediction _stt_task: exception during iteration: {e}")
+                raise
+            finally:
+                logger.warning(f"eou_prediction _stt_task: finished, total events={event_count}")
         else:
             logger.warning(f"eou_prediction _stt_task: node is not AsyncIterable, type={type(node)}")
 
