@@ -78,6 +78,10 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         self._vad_ch: aio.Chan[rtc.AudioFrame] | None = None
 
     def start(self) -> None:
+        logger.warning(
+            f"eou_prediction AudioRecognition.start: "
+            f"stt={self._stt}, vad={self._vad}, turn_detector={self._turn_detector}"
+        )
         self.update_stt(self._stt)
         self.update_vad(self._vad)
 
@@ -89,7 +93,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         if self._audio_stream_start_time is None:
             self._audio_stream_start_time = time.time()
             self._audio_stream_start_time_history.append(self._audio_stream_start_time)
-            logger.info(f"Pushing audio, setting audio stream start time to {self._audio_stream_start_time}")
+            logger.warning("eou_prediction Pushing audio, setting stream start time")
         if self._stt_ch is not None:
             self._stt_ch.send_nowait(frame)
 
@@ -109,11 +113,12 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
     def update_stt(self, stt: io.STTNode | None) -> None:
         self._stt = stt
         if stt:
-            logger.info(f"Updating STT, resetting audio stream start time at {time.time()}")
+            logger.warning("eou_prediction Updating STT, resetting audio stream start time")
             self._audio_stream_start_time = None  # Reset when STT is updated
             self._stt_ch = aio.Chan[rtc.AudioFrame]()
             self._stt_atask = asyncio.create_task(self._stt_task(stt, self._stt_ch, self._stt_atask))
         elif self._stt_atask is not None:
+            logger.warning("eou_prediction Disabling STT")
             self._stt_atask.cancel()
             self._stt_atask = None
             self._stt_ch = None
@@ -121,9 +126,11 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
     def update_vad(self, vad: vad.VAD | None) -> None:
         self._vad = vad
         if vad:
+            logger.warning("eou_prediction Enabling VAD")
             self._vad_ch = aio.Chan[rtc.AudioFrame]()
             self._vad_atask = asyncio.create_task(self._vad_task(vad, self._vad_ch, self._vad_atask))
         elif self._vad_atask is not None:
+            logger.warning("eou_prediction Disabling VAD")
             self._vad_atask.cancel()
             self._vad_atask = None
             self._vad_ch = None
@@ -133,7 +140,8 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         # This is calculated by adding the time of the last transcript end time(DG clock) with the
         # audio stream start time (wall clock).
         # Ex: 8s + 1750184202.385735 = 1750184210.385735
-        # _audio_stream_start_time is set by us above when we receive the first audio frame, it's reset on a Language switch.
+        # _audio_stream_start_time is set by us above when we receive the first audio frame,
+        # it's reset on a Language switch.
         return self._last_transcript_end_time + self._audio_stream_start_time
 
     async def _on_stt_event(self, ev: stt.SpeechEvent) -> None:
@@ -142,7 +150,8 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             transcript = ev.alternatives[0].text
             self._last_language = ev.alternatives[0].language
             logger.warning(
-                f"eou_prediction FINAL_TRANSCRIPT: text='{transcript}', language={self._last_language}, speaking={self._speaking}"
+                f"eou_prediction FINAL_TRANSCRIPT: text='{transcript}', "
+                f"language={self._last_language}, speaking={self._speaking}"
             )
             if not transcript:
                 return
@@ -183,6 +192,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
 
     async def _on_vad_event(self, ev: vad.VADEvent) -> None:
         if ev.type == vad.VADEventType.START_OF_SPEECH:
+            logger.warning("eou_prediction VAD START_OF_SPEECH")
             self._hooks.on_start_of_speech(ev)
             self._speaking = True
 
@@ -199,7 +209,8 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             # when VAD fires END_OF_SPEECH, it already waited for the silence_duration
             self._last_speaking_time = time.time() - ev.silence_duration
             logger.warning(
-                f"eou_prediction VAD END_OF_SPEECH: transcript='{self._audio_transcript}', language={self._last_language}"
+                f"eou_prediction VAD END_OF_SPEECH: transcript='{self._audio_transcript}', "
+                f"language={self._last_language}"
             )
 
             chat_ctx = self._hooks.retrieve_chat_ctx().copy()
@@ -207,7 +218,8 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
 
     def _run_eou_detection(self, chat_ctx: llm.ChatContext) -> None:
         logger.warning(
-            f"eou_prediction _run_eou_detection called: transcript='{self._audio_transcript}', language={self._last_language}, turn_detector={self._turn_detector}"
+            f"eou_prediction _run_eou_detection: transcript='{self._audio_transcript}', "
+            f"language={self._last_language}, turn_detector={self._turn_detector}"
         )
 
         if self._stt and not self._audio_transcript:
@@ -226,7 +238,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             endpointing_delay = self._min_endpointing_delay
 
             if turn_detector is not None and turn_detector.supports_language(self._last_language):
-                logger.warning(f"eou_prediction Language check passed! Calling predict_end_of_turn")
+                logger.warning("eou_prediction Language check passed! Calling predict_end_of_turn")
                 end_of_turn_probability = await turn_detector.predict_end_of_turn(chat_ctx)
                 tracing.Tracing.log_event(
                     "end of user turn probability",
@@ -236,8 +248,9 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                 if end_of_turn_probability < unlikely_threshold:
                     endpointing_delay = self._max_endpointing_delay
             elif turn_detector is not None:
+                supports = turn_detector.supports_language(self._last_language)
                 logger.warning(
-                    f"eou_prediction Language check FAILED! language={self._last_language}, supports_language={turn_detector.supports_language(self._last_language)}"
+                    f"eou_prediction Language check FAILED! language={self._last_language}, supports={supports}"
                 )
 
             await asyncio.sleep(
@@ -265,7 +278,9 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                 f"stream history: {self._audio_stream_start_time_history}"
             )
 
-            # We inject [beep detected] transcripts manually in voice detection. If this type of transcript is found, do not attempt to emit metrics as it will distort EOU/Transcript delay measurements.
+            # We inject [beep detected] transcripts manually in voice detection. If this type of
+            # transcript is found, do not attempt to emit metrics as it will distort
+            # EOU/Transcript delay measurements.
             if "[beep detected]" not in self._audio_transcript:
                 # These numbers are emitted to taylor fresh and used to calculate the turn latency.
                 eou_metrics = metrics.EOUMetrics(
