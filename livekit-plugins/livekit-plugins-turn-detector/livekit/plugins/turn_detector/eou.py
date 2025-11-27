@@ -165,8 +165,8 @@ class EOUModel:
         assert result is not None, "end_of_utterance prediction should always returns a result"
 
         result_json = json.loads(result.decode())
-        logger.info(f"eou_prediction result: {result.decode()}")
-        logger.info(
+        logger.warning(f"eou_prediction result: {result.decode()}")
+        logger.warning(
             "eou prediction",
             extra=result_json,
         )
