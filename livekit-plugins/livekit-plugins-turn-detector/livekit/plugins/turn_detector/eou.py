@@ -116,6 +116,7 @@ class EOUModel:
         inference_executor: InferenceExecutor | None = None,
         unlikely_threshold: float = 0.0289,
     ) -> None:
+        logger.warning("eou_prediction init")
         self._executor = inference_executor or get_current_job_context().inference_executor
         self._unlikely_threshold = unlikely_threshold
 
@@ -130,10 +131,12 @@ class EOUModel:
         return parts[0] == "en" or parts[0] == "english"
 
     async def predict_eou(self, chat_ctx: llm.ChatContext) -> float:
+        logger.warning("eou_prediction predict_eou")
         return await self.predict_end_of_turn(chat_ctx)
 
     # our EOU model inference should be fast, 3 seconds is more than enough
     async def predict_end_of_turn(self, chat_ctx: llm.ChatContext, *, timeout: float | None = 3) -> float:
+        logger.warning("eou_prediction predict_end_of_turn")
         messages = []
 
         for item in chat_ctx.items:
