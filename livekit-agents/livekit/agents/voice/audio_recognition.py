@@ -211,7 +211,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                     self._last_speaking_time = time.time()
 
                 chat_ctx = self._hooks.retrieve_chat_ctx().copy()
-                self._run_eou_detection(chat_ctx)
+                self._run_eou_detection_sync(chat_ctx)
             else:
                 logger.warning(
                     f"eou_prediction FINAL_TRANSCRIPT: skipping _run_eou_detection "
@@ -252,9 +252,9 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             )
 
             chat_ctx = self._hooks.retrieve_chat_ctx().copy()
-            self._run_eou_detection(chat_ctx)
+            self._run_eou_detection_sync(chat_ctx)
 
-    def _run_eou_detection(self, chat_ctx: llm.ChatContext) -> None:
+    def _run_eou_detection_sync(self, chat_ctx: llm.ChatContext) -> None:
         logger.warning(
             f"eou_prediction _run_eou_detection: transcript='{self._audio_transcript}', "
             f"language={self._last_language}, turn_detector={self._turn_detector}"
