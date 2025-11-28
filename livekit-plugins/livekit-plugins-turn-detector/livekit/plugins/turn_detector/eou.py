@@ -160,10 +160,12 @@ class EOUModel:
 
         json_data = json.dumps({"chat_ctx": messages}).encode()
 
+        logger.warning("eou_prediction predict_end_of_turn before inference.")
         result = await asyncio.wait_for(
             self._executor.do_inference(_EUORunner.INFERENCE_METHOD, json_data),
             timeout=timeout,
         )
+        logger.warning("eou_prediction predict_end_of_turn after inference.")
 
         assert result is not None, "end_of_utterance prediction should always returns a result"
 
