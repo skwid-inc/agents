@@ -152,9 +152,7 @@ class VAD(agents.vad.VAD):
         stream = VADStream(
             self,
             self._opts,
-            onnx_model.OnnxModel(
-                onnx_session=self._onnx_session, sample_rate=self._opts.sample_rate
-            ),
+            onnx_model.OnnxModel(onnx_session=self._onnx_session, sample_rate=self._opts.sample_rate),
         )
         self._streams.add(stream)
         return stream
@@ -253,13 +251,10 @@ class VADStream(agents.vad.VADStream):
         if self._input_sample_rate:
             assert self._speech_buffer is not None
 
-            self._prefix_padding_samples = int(
-                self._opts.prefix_padding_duration * self._input_sample_rate
-            )
+            self._prefix_padding_samples = int(self._opts.prefix_padding_duration * self._input_sample_rate)
 
             self._speech_buffer.resize(
-                int(self._opts.max_buffered_speech * self._input_sample_rate)
-                + self._prefix_padding_samples
+                int(self._opts.max_buffered_speech * self._input_sample_rate) + self._prefix_padding_samples
             )
 
             if self._opts.max_buffered_speech > old_max_buffered_speech:
@@ -297,13 +292,10 @@ class VADStream(agents.vad.VADStream):
                 self._input_sample_rate = input_frame.sample_rate
 
                 # alloc the buffers now that we know the input sample rate
-                self._prefix_padding_samples = int(
-                    self._opts.prefix_padding_duration * self._input_sample_rate
-                )
+                self._prefix_padding_samples = int(self._opts.prefix_padding_duration * self._input_sample_rate)
 
                 self._speech_buffer = np.empty(
-                    int(self._opts.max_buffered_speech * self._input_sample_rate)
-                    + self._prefix_padding_samples,
+                    int(self._opts.max_buffered_speech * self._input_sample_rate) + self._prefix_padding_samples,
                     dtype=np.int16,
                 )
 
@@ -333,9 +325,7 @@ class VADStream(agents.vad.VADStream):
             while True:
                 start_time = time.perf_counter()
 
-                available_inference_samples = sum(
-                    [frame.samples_per_channel for frame in inference_frames]
-                )
+                available_inference_samples = sum([frame.samples_per_channel for frame in inference_frames])
                 if available_inference_samples < self._model.window_size_samples:
                     break  # not enough samples to run inference
 
@@ -351,9 +341,7 @@ class VADStream(agents.vad.VADStream):
                 )
 
                 # run the inference
-                p = await self._loop.run_in_executor(
-                    self._executor, self._model, inference_f32_data
-                )
+                p = await self._loop.run_in_executor(self._executor, self._model, inference_f32_data)
                 p = self._exp_filter.apply(exp=1.0, sample=p)
 
                 window_duration = self._model.window_size_samples / self._opts.sample_rate
@@ -362,9 +350,7 @@ class VADStream(agents.vad.VADStream):
                 pub_timestamp += window_duration
 
                 resampling_ratio = self._input_sample_rate / self._model.sample_rate
-                to_copy = (
-                    self._model.window_size_samples * resampling_ratio + input_copy_remaining_fract
-                )
+                to_copy = self._model.window_size_samples * resampling_ratio + input_copy_remaining_fract
                 to_copy_int = int(to_copy)
                 input_copy_remaining_fract = to_copy - to_copy_int
 
@@ -372,9 +358,9 @@ class VADStream(agents.vad.VADStream):
                 available_space = len(self._speech_buffer) - speech_buffer_index
                 to_copy_buffer = min(to_copy_int, available_space)
                 if to_copy_buffer > 0:
-                    self._speech_buffer[
-                        speech_buffer_index : speech_buffer_index + to_copy_buffer
-                    ] = input_frame.data[:to_copy_buffer]
+                    self._speech_buffer[speech_buffer_index : speech_buffer_index + to_copy_buffer] = input_frame.data[
+                        :to_copy_buffer
+                    ]
                     speech_buffer_index += to_copy_buffer
                 elif not self._speech_buffer_max_reached:
                     # reached self._opts.max_buffered_speech (padding is included)
@@ -459,6 +445,7 @@ class VADStream(agents.vad.VADStream):
                             pub_silence_duration = 0.0
                             pub_speech_duration = speech_threshold_duration
 
+                            logger.warning("eou_prediction VAD _START_OF_SPEECH")
                             self._event_ch.send_nowait(
                                 agents.vad.VADEvent(
                                     type=agents.vad.VADEventType.START_OF_SPEECH,
@@ -478,14 +465,12 @@ class VADStream(agents.vad.VADStream):
                     if not pub_speaking:
                         _reset_write_cursor()
 
-                    if (
-                        pub_speaking
-                        and silence_threshold_duration >= self._opts.min_silence_duration
-                    ):
+                    if pub_speaking and silence_threshold_duration >= self._opts.min_silence_duration:
                         pub_speaking = False
                         pub_speech_duration = 0.0
                         pub_silence_duration = silence_threshold_duration
 
+                        logger.warning("eou_prediction VAD _END_OF_SPEECH")
                         self._event_ch.send_nowait(
                             agents.vad.VADEvent(
                                 type=agents.vad.VADEventType.END_OF_SPEECH,

@@ -148,8 +148,10 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         return self._last_transcript_end_time + self._audio_stream_start_time
 
     async def _on_stt_event(self, ev: stt.SpeechEvent) -> None:
+        logger.warning("eou_prediction _on_stt_event ENTERED")
         logger.warning(f"eou_prediction STT event received: type={ev.type}")
         if ev.type == stt.SpeechEventType.FINAL_TRANSCRIPT:
+            logger.warning("eou_prediction FINAL_TRANSCRIPT branch entered")
             self._hooks.on_final_transcript(ev)
             transcript = ev.alternatives[0].text
             self._last_language = ev.alternatives[0].language
@@ -183,8 +185,23 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             logger.warning(
                 f"eou_prediction FINAL_TRANSCRIPT check: speaking={self._speaking}, vad={self._vad is not None}"
             )
-            if not self._speaking:
-                logger.warning("eou_prediction FINAL_TRANSCRIPT: not speaking, calling _run_eou_detection")
+            # Check if we should trigger EOU detection
+            # Either: speaking=False (VAD detected end), OR no VAD (use STT only), OR
+            # VAD is enabled but hasn't fired END_OF_SPEECH in a while (fallback)
+            time_since_last_speech = (
+                time.time() - self._last_speaking_time if self._last_speaking_time > 0 else float("inf")
+            )
+            should_trigger = (
+                not self._speaking  # VAD says not speaking
+                or not self._vad  # No VAD, rely on STT
+                or (self._vad and time_since_last_speech > 2.0)  # VAD enabled but no END_OF_SPEECH for 2+ seconds
+            )
+
+            if should_trigger:
+                logger.warning(
+                    f"eou_prediction FINAL_TRANSCRIPT: triggering _run_eou_detection "
+                    f"(speaking={self._speaking}, time_since_speech={time_since_last_speech:.2f}s)"
+                )
                 if not self._vad:
                     # vad disabled, use stt timestamp
                     # TODO: this would screw up transcription latency metrics
@@ -196,7 +213,10 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
                 chat_ctx = self._hooks.retrieve_chat_ctx().copy()
                 self._run_eou_detection(chat_ctx)
             else:
-                logger.warning("eou_prediction FINAL_TRANSCRIPT: still speaking, skipping _run_eou_detection")
+                logger.warning(
+                    f"eou_prediction FINAL_TRANSCRIPT: skipping _run_eou_detection "
+                    f"(speaking={self._speaking}, time_since_speech={time_since_last_speech:.2f}s)"
+                )
         elif ev.type == stt.SpeechEventType.INTERIM_TRANSCRIPT:
             logger.warning(
                 f"eou_prediction INTERIM_TRANSCRIPT: text='{ev.alternatives[0].text if ev.alternatives else 'N/A'}'"
@@ -209,6 +229,8 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             logger.warning("eou_prediction VAD START_OF_SPEECH")
             self._hooks.on_start_of_speech(ev)
             self._speaking = True
+            # Update last_speaking_time when speech starts (for timeout fallback)
+            self._last_speaking_time = time.time()
 
             if self._end_of_turn_task is not None:
                 self._end_of_turn_task.cancel()
@@ -219,6 +241,7 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             self._hooks.on_vad_inference_done(ev)
 
         elif ev.type == vad.VADEventType.END_OF_SPEECH:
+            logger.warning("eou_prediction VAD END_OF_SPEECH")
             self._hooks.on_end_of_speech(ev)
             self._speaking = False
             # when VAD fires END_OF_SPEECH, it already waited for the silence_duration
@@ -251,6 +274,9 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         @utils.log_exceptions(logger=logger)
         async def _bounce_eou_task() -> None:
             endpointing_delay = self._min_endpointing_delay
+
+            logger.warning("eou_prediction _bounce_eou_task ENTERED")
+            logger.warning(f"eou_prediction self._last_language: {self._last_language}")
 
             if turn_detector is not None and turn_detector.supports_language(self._last_language):
                 logger.warning("eou_prediction Language check passed! Calling predict_end_of_turn")
