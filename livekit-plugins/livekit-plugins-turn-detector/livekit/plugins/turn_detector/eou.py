@@ -158,6 +158,19 @@ class EOUModel:
 
         messages = messages[-MAX_HISTORY_TURNS:]
 
+        # Remove any assistant turns that come after the last user turn
+        # This handles cases where chat_ctx contains LLM's response to user's incomplete message
+        # Find the index of the last user message
+        last_user_index = -1
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i]["role"] == "user":
+                last_user_index = i
+                break
+
+        # If we found a user message, remove all assistant messages after it
+        if last_user_index >= 0:
+            messages = [msg for i, msg in enumerate(messages) if i <= last_user_index or msg["role"] != "assistant"]
+
         json_data = json.dumps({"chat_ctx": messages}).encode()
 
         logger.warning("eou_prediction predict_end_of_turn before inference.")
@@ -171,8 +184,4 @@ class EOUModel:
 
         result_json = json.loads(result.decode())
         logger.warning(f"eou_prediction result: {result.decode()}")
-        logger.warning(
-            "eou prediction",
-            extra=result_json,
-        )
         return result_json["eou_probability"]

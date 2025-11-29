@@ -348,7 +348,6 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         audio_input: io.AudioInput,
         task: asyncio.Task[None] | None,
     ) -> None:
-        logger.warning("eou_prediction _stt_task started")
         if task is not None:
             await aio.cancel_and_wait(task)
 
@@ -357,35 +356,14 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
             node = await node
 
         if node is None:
-            logger.warning("eou_prediction _stt_task: node is None, exiting")
             return
 
-        logger.warning(f"eou_prediction _stt_task: node created, type={type(node)}")
         if isinstance(node, AsyncIterable):
-            logger.warning("eou_prediction _stt_task: starting to iterate over STT events")
-            event_count = 0
-            try:
-                async for ev in node:
-                    event_count += 1
-                    logger.warning(
-                        f"eou_prediction _stt_task: received event #{event_count}, type={ev.type}, ev_type={type(ev)}"
-                    )
-                    is_speech_event = isinstance(ev, stt.SpeechEvent)
-                    logger.warning(
-                        f"eou_prediction _stt_task: isinstance check: {is_speech_event}, expected={stt.SpeechEvent}"
-                    )
-                    if not is_speech_event:
-                        raise TypeError(f"STT node must yield SpeechEvent, got {type(ev)}")
-                    logger.warning(f"eou_prediction _stt_task: calling _on_stt_event for event #{event_count}")
-                    await self._on_stt_event(ev)
-                    logger.warning(f"eou_prediction _stt_task: _on_stt_event completed for event #{event_count}")
-            except Exception as e:
-                logger.warning(f"eou_prediction _stt_task: exception during iteration: {e}", exc_info=True)
-                raise
-            finally:
-                logger.warning(f"eou_prediction _stt_task: finished, total events={event_count}")
-        else:
-            logger.warning(f"eou_prediction _stt_task: node is not AsyncIterable, type={type(node)}")
+            async for ev in node:
+                is_speech_event = isinstance(ev, stt.SpeechEvent)
+                if not is_speech_event:
+                    raise TypeError(f"STT node must yield SpeechEvent, got {type(ev)}")
+                await self._on_stt_event(ev)
 
     @utils.log_exceptions(logger=logger)
     async def _vad_task(self, vad: vad.VAD, audio_input: io.AudioInput, task: asyncio.Task[None] | None) -> None:
