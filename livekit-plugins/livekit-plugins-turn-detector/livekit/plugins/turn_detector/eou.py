@@ -173,7 +173,7 @@ class EOUModel:
 
         json_data = json.dumps({"chat_ctx": messages}).encode()
 
-        logger.warning("eou_prediction predict_end_of_turn before inference.")
+        logger.warning(f"eou_prediction predict_end_of_turn json_data: {json_data}")
         result = await asyncio.wait_for(
             self._executor.do_inference(_EUORunner.INFERENCE_METHOD, json_data),
             timeout=timeout,
