@@ -63,6 +63,18 @@ class AudioInput:
 
     def on_detached(self) -> None: ...
 
+    def drain_buffer(self) -> int:
+        """Drain all buffered audio frames from the underlying stream.
+
+        This method clears accumulated audio frames when the consumer is slow
+        and frames are piling up in the internal buffer. This is useful for
+        preventing memory growth during long-running sessions.
+
+        Returns:
+            int: The number of frames that were dropped.
+        """
+        return 0
+
 
 class VideoInput:
     def __aiter__(self) -> AsyncIterator[rtc.VideoFrame]:

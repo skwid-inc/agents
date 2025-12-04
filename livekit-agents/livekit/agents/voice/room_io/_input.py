@@ -174,6 +174,17 @@ class _ParticipantAudioInputStream(_ParticipantInputStream[rtc.AudioFrame], Audi
             noise_cancellation=self._noise_cancellation,
         )
 
+    @override
+    def drain_buffer(self) -> int:
+        """Drain all buffered audio frames from the underlying stream.
+
+        Returns:
+            int: The number of frames that were dropped.
+        """
+        if self._stream is not None:
+            return self._stream.drain_buffer()
+        return 0
+
 
 class _ParticipantVideoInputStream(_ParticipantInputStream[rtc.VideoFrame], VideoInput):
     def __init__(self, room: rtc.Room) -> None:
