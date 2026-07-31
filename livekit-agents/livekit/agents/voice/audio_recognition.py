@@ -290,10 +290,15 @@ class AudioRecognition(rtc.EventEmitter[Literal["metrics_collected"]]):
         if node is None:
             return
 
-        if isinstance(node, AsyncIterable):
-            async for ev in node:
-                assert isinstance(ev, stt.SpeechEvent), "STT node must yield SpeechEvent"
-                await self._on_stt_event(ev)
+        try:
+            if isinstance(node, AsyncIterable):
+                async for ev in node:
+                    assert isinstance(ev, stt.SpeechEvent), "STT node must yield SpeechEvent"
+                    await self._on_stt_event(ev)
+        finally:
+            close = getattr(node, "aclose", None)
+            if close is not None:
+                await close()
 
     @utils.log_exceptions(logger=logger)
     async def _vad_task(

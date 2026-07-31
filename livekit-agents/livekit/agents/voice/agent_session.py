@@ -278,11 +278,37 @@ class AgentSession(rtc.EventEmitter[EventTypes], Generic[Userdata_T]):
             if not self._started:
                 return
 
+            self._started = False
+
+            if (
+                self._update_activity_atask is not None
+                and self._update_activity_atask is not asyncio.current_task()
+            ):
+                await utils.aio.cancel_and_wait(self._update_activity_atask)
+
+            async with self._activity_lock:
+                activities = []
+                for activity in (
+                    getattr(self, "_next_activity", None),
+                    self._activity,
+                ):
+                    if activity is not None and all(
+                        existing is not activity for existing in activities
+                    ):
+                        activities.append(activity)
+
+                self._next_activity = None
+                self._activity = None
+
+            for activity in activities:
+                await activity.aclose()
+
             if self._forward_audio_atask is not None:
                 await utils.aio.cancel_and_wait(self._forward_audio_atask)
 
             if self._room_io:
                 await self._room_io.aclose()
+                self._room_io = None
 
     def emit(self, event: EventTypes, ev: AgentEvent) -> None:  # type: ignore
         debug.Tracing.log_event(f'agent.on("{event}")', ev.model_dump())

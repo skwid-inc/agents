@@ -65,6 +65,7 @@ class AgentActivity(RecognitionHooks):
 
         self._started = False
         self._draining = False
+        self._closed = False
 
         self._current_speech: SpeechHandle | None = None
         self._speech_q: list[tuple[int, float, SpeechHandle]] = []
@@ -365,8 +366,26 @@ class AgentActivity(RecognitionHooks):
 
     async def aclose(self) -> None:
         async with self._lock:
+            if self._closed:
+                return
+
+            self._closed = True
             if not self._draining:
                 logger.warning("task closing without draining")
+                self._draining = True
+
+            handles = [self._current_speech]
+            handles.extend(speech for _, _, speech in self._speech_q)
+            for handle in handles:
+                if handle is not None:
+                    handle.interrupt(force=True)
+
+            self._speech_q.clear()
+            self._wake_up_main_task()
+
+            speech_tasks = list(self._speech_tasks)
+            if speech_tasks:
+                await utils.aio.cancel_and_wait(*speech_tasks)
 
             if self._rt_session is not None:
                 await self._rt_session.aclose()
@@ -378,6 +397,7 @@ class AgentActivity(RecognitionHooks):
                 await utils.aio.cancel_and_wait(self._main_atask)
 
             self._agent._activity = None
+            self._started = False
 
     def push_audio(self, frame: rtc.AudioFrame) -> None:
         if not self._started:
@@ -517,7 +537,7 @@ class AgentActivity(RecognitionHooks):
         self._schedule_speech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL)
         return handle
 
-    def interrupt(self) -> asyncio.Future:
+    def interrupt(self, *, force: bool = False) -> asyncio.Future:
         """Interrupt the current speech generation and any queued speeches.
 
         Returns:
@@ -528,11 +548,11 @@ class AgentActivity(RecognitionHooks):
         current_speech = self._current_speech
 
         if current_speech is not None:
-            current_speech = current_speech.interrupt()
+            current_speech = current_speech.interrupt(force=force)
 
         for speech in self._speech_q:
             _, _, speech = speech
-            speech.interrupt()
+            speech.interrupt(force=force)
 
         if self._rt_session is not None:
             self._rt_session.interrupt()
