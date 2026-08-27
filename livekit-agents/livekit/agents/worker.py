@@ -58,6 +58,7 @@ from .version import __version__
 ASSIGNMENT_TIMEOUT = 7.5
 UPDATE_STATUS_INTERVAL = 2.5
 UPDATE_LOAD_INTERVAL = 0.5
+WORKER_WS_HEARTBEAT_INTERVAL = 10.0
 
 
 def _default_initialize_process_fnc(proc: JobProcess) -> Any:
@@ -220,7 +221,7 @@ class WorkerInfo:
     http_port: int
 
 
-EventTypes = Literal["worker_started", "worker_registered"]
+EventTypes = Literal["worker_started", "worker_registered", "worker_disconnected"]
 
 
 class Worker(utils.EventEmitter[EventTypes]):
@@ -597,6 +598,7 @@ class Worker(utils.EventEmitter[EventTypes]):
         retry_count = 0
         ws: aiohttp.ClientWebSocketResponse | None = None
         while not self._closed:
+            registered = False
             try:
                 self._connecting = True
                 join_jwt = (
@@ -615,7 +617,16 @@ class Worker(utils.EventEmitter[EventTypes]):
                 path_parts = [f"{scheme}://{parse.netloc}", parse.path, "/agent"]
                 agent_url = reduce(urljoin, path_parts)
 
-                ws = await self._http_session.ws_connect(agent_url, headers=headers, autoping=True)
+                # A transport heartbeat is required even though autoping is enabled.
+                # autoping only answers server pings; it does not detect a black-holed
+                # connection on its own. Without a client heartbeat, a worker can stay
+                # advertised as available until the kernel TCP timeout expires.
+                ws = await self._http_session.ws_connect(
+                    agent_url,
+                    headers=headers,
+                    autoping=True,
+                    heartbeat=WORKER_WS_HEARTBEAT_INTERVAL,
+                )
 
                 retry_count = 0
 
@@ -646,6 +657,7 @@ class Worker(utils.EventEmitter[EventTypes]):
                     raise Exception("expected register response as first message")
 
                 self._handle_register(msg.register)
+                registered = True
                 self._connecting = False
 
                 await self._run_ws(ws)
@@ -666,6 +678,8 @@ class Worker(utils.EventEmitter[EventTypes]):
             finally:
                 if ws is not None:
                     await ws.close()
+                if registered and not self._closed:
+                    self.emit("worker_disconnected")
 
     async def _run_ws(self, ws: aiohttp.ClientWebSocketResponse):
         closing_ws = False
