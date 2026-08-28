@@ -274,7 +274,10 @@ class Worker(utils.EventEmitter[EventTypes]):
         if len(_InferenceRunner.registered_runners) > 0:
             self._inference_executor = ipc.inference_proc_executor.InferenceProcExecutor(
                 runners=_InferenceRunner.registered_runners,
-                initialize_timeout=30,
+                # never below the previous hardcoded 30: WorkerOptions defaults
+                # initialize_process_timeout to 10, which is not enough to spawn
+                # and import a heavy entrypoint before loading the EOU model.
+                initialize_timeout=max(opts.initialize_process_timeout, 30),
                 close_timeout=5,
                 memory_warn_mb=2000,
                 memory_limit_mb=0,  # no limit
