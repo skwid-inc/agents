@@ -4,9 +4,12 @@ import asyncio
 import contextlib
 import logging
 import multiprocessing as mp
+import os
+import signal
 import socket
 import sys
 import threading
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from multiprocessing.context import BaseContext
@@ -19,6 +22,15 @@ from ..utils import aio, log_exceptions, time_ms
 from ..utils.aio import duplex_unix
 from . import channel, proto
 from .log_queue import LogQueueListener
+from .stack_dump import (
+    PongStallDumpTrigger,
+    StackDumpInit,
+    StackDumpReady,
+    StackDumpRequestRecord,
+    close_stack_dump_fd,
+    collect_stack_dump_fd,
+    receive_stack_dump_fd,
+)
 
 
 @dataclass
@@ -66,6 +78,17 @@ class SupervisedProc(ABC):
         self._kill_sent = False
         self._initialize_fut = asyncio.Future[None]()
         self._lock = asyncio.Lock()
+        self._stack_dump_ready = StackDumpReady.disabled()
+        self._stack_dump_init: StackDumpInit | None = None
+        self._stack_dump_fd: int | None = None
+        self._stack_dump_pch: socket.socket | None = None
+        self._stack_dump_cch: socket.socket | None = None
+        self._stack_dump_collected = False
+        self._stack_dump_trigger: PongStallDumpTrigger | None = None
+        self._stack_dump_request_record: StackDumpRequestRecord | None = None
+        self._stack_dump_setup_failure: str | None = None
+        self._last_pong_monotonic: float | None = None
+        self._pong_timeout_fired = False
 
     @abstractmethod
     def _create_process(self, cch: socket.socket, log_cch: socket.socket) -> mp.Process: ...
@@ -115,8 +138,16 @@ class SupervisedProc(ABC):
             log_listener = LogQueueListener(log_pch, _add_proc_ctx_log)
             log_listener.start()
 
-            self._proc = self._create_process(mp_cch, mp_log_cch)
-            await self._loop.run_in_executor(None, self._proc.start)
+            try:
+                self._proc = self._create_process(mp_cch, mp_log_cch)
+                await self._loop.run_in_executor(None, self._proc.start)
+            except BaseException:
+                self._close_stack_dump_channels()
+                raise
+            finally:
+                if self._stack_dump_cch is not None:
+                    self._stack_dump_cch.close()
+                    self._stack_dump_cch = None
             mp_log_cch.close()
             mp_cch.close()
 
@@ -146,18 +177,18 @@ class SupervisedProc(ABC):
     async def initialize(self) -> None:
         """initialize the process, this is sending a InitializeRequest message and waiting for a
         InitializeResponse with a timeout"""
-        await channel.asend_message(
-            self._pch,
-            proto.InitializeRequest(
-                asyncio_debug=self._loop.get_debug(),
-                ping_interval=self._opts.ping_interval,
-                ping_timeout=self._opts.ping_timeout,
-                high_ping_threshold=self._opts.high_ping_threshold,
-            ),
-        )
-
         # wait for the process to become ready
         try:
+            await channel.asend_message(
+                self._pch,
+                proto.InitializeRequest(
+                    asyncio_debug=self._loop.get_debug(),
+                    ping_interval=self._opts.ping_interval,
+                    ping_timeout=self._opts.ping_timeout,
+                    high_ping_threshold=self._opts.high_ping_threshold,
+                    stack_dump_init=self._stack_dump_init,
+                ),
+            )
             init_res = await asyncio.wait_for(
                 channel.arecv_message(self._pch, proto.IPC_MESSAGES),
                 timeout=self._opts.initialize_timeout,
@@ -167,15 +198,23 @@ class SupervisedProc(ABC):
             )
 
             if init_res.error:
-                self._initialize_fut.set_exception(
-                    RuntimeError(f"process initialization failed: {init_res.error}")
-                )
                 logger.error(
                     f"process initialization failed: {init_res.error}",
                     extra=self.logging_extra(),
                 )
                 raise RuntimeError(f"process initialization failed: {init_res.error}")
             else:
+                if (
+                    self._stack_dump_init is not None
+                    and self._stack_dump_pch is not None
+                    and self._pid is not None
+                ):
+                    self._stack_dump_ready, self._stack_dump_fd = receive_stack_dump_fd(
+                        self._stack_dump_pch,
+                        self._stack_dump_init,
+                        init_res.stack_dump_ready,
+                        expected_pid=self._pid,
+                    )
                 self._initialize_fut.set_result(None)
 
         except asyncio.TimeoutError:
@@ -185,9 +224,23 @@ class SupervisedProc(ABC):
             logger.error("initialization timed out, killing process", extra=self.logging_extra())
             self._send_kill_signal()
             raise
-        except Exception as e:  # should be channel.ChannelClosed most of the time
-            self._initialize_fut.set_exception(e)
+        except asyncio.CancelledError:
+            if not self._initialize_fut.done():
+                self._initialize_fut.set_exception(RuntimeError("process initialization cancelled"))
             raise
+        except Exception as e:  # should be channel.ChannelClosed most of the time
+            if not self._initialize_fut.done():
+                self._initialize_fut.set_exception(e)
+            raise
+        finally:
+            self._close_stack_dump_channels()
+
+    def _close_stack_dump_channels(self) -> None:
+        for name in ("_stack_dump_pch", "_stack_dump_cch"):
+            sock = getattr(self, name)
+            if sock is not None:
+                sock.close()
+                setattr(self, name, None)
 
     async def aclose(self) -> None:
         """attempt to gracefully close the supervised process"""
@@ -195,6 +248,10 @@ class SupervisedProc(ABC):
             return
 
         self._closing = True
+        self._close_stack_dump_trigger()
+        self._close_stack_dump_channels()
+        if not self._initialize_fut.done():
+            self._initialize_fut.set_exception(RuntimeError("process closed before initialization"))
         with contextlib.suppress(duplex_unix.DuplexClosed):
             await channel.asend_message(self._pch, proto.ShutdownRequest())
 
@@ -221,11 +278,162 @@ class SupervisedProc(ABC):
             raise RuntimeError("process not started")
 
         self._closing = True
+        self._close_stack_dump_trigger()
+        self._close_stack_dump_channels()
+        if not self._initialize_fut.done():
+            self._initialize_fut.set_exception(RuntimeError("process killed before initialization"))
         self._send_kill_signal()
 
         async with self._lock:
             if self._supervise_atask:
                 await asyncio.shield(self._supervise_atask)
+
+    def _request_stack_dump(self) -> None:
+        if (
+            not self._stack_dump_ready.ready
+            or self._stack_dump_request_record is not None
+            or self._kill_sent
+            or self._pid is None
+            or self._last_pong_monotonic is None
+            or sys.platform == "win32"
+            or not hasattr(signal, "SIGUSR1")
+        ):
+            return
+        try:
+            if not self._proc.is_alive():
+                return
+        except ValueError:
+            return
+
+        requested_at_unix_ms = time.time_ns() // 1_000_000
+        last_pong_age_ms = round((time.monotonic() - self._last_pong_monotonic) * 1000)
+        try:
+            os.kill(self._pid, signal.SIGUSR1)
+        except (OSError, ValueError) as error:
+            self._stack_dump_request_record = StackDumpRequestRecord(
+                child_pid=self._pid,
+                episode_token=self._stack_dump_ready.episode_token,
+                requested_at_unix_ms=requested_at_unix_ms,
+                last_pong_age_ms=last_pong_age_ms,
+                sent=False,
+                failure_class=type(error).__name__,
+            )
+        else:
+            self._stack_dump_request_record = StackDumpRequestRecord(
+                child_pid=self._pid,
+                episode_token=self._stack_dump_ready.episode_token,
+                requested_at_unix_ms=requested_at_unix_ms,
+                last_pong_age_ms=last_pong_age_ms,
+                sent=True,
+            )
+
+    def _arm_stack_dump_trigger(self) -> None:
+        if not self._stack_dump_ready.ready:
+            return
+        if self._stack_dump_trigger is None:
+            self._last_pong_monotonic = time.monotonic()
+            self._stack_dump_trigger = PongStallDumpTrigger(
+                self._loop,
+                ping_timeout=self._opts.ping_timeout,
+                request_dump=self._request_stack_dump,
+            )
+        self._stack_dump_trigger.arm()
+
+    def _on_stack_dump_pong(self) -> None:
+        self._last_pong_monotonic = time.monotonic()
+        if self._stack_dump_trigger is not None:
+            self._stack_dump_trigger.pong()
+
+    def _close_stack_dump_trigger(self) -> None:
+        if self._stack_dump_trigger is not None:
+            self._stack_dump_trigger.close()
+
+    def _collect_and_emit_stack_dump(self) -> None:
+        if self._stack_dump_collected:
+            return
+        self._stack_dump_collected = True
+        init = self._stack_dump_init
+        fd, self._stack_dump_fd = self._stack_dump_fd, None
+        self._close_stack_dump_channels()
+        collection = None
+        if fd is not None:
+            if self._stack_dump_request_record is not None and self._stack_dump_request_record.sent:
+                collection = collect_stack_dump_fd(fd, self._stack_dump_ready)
+            else:
+                close_stack_dump_fd(fd)
+
+        request = self._stack_dump_request_record
+        if request is None:
+            if self._pong_timeout_fired and (
+                init is not None or self._stack_dump_setup_failure is not None
+            ):
+                with contextlib.suppress(Exception):
+                    logger.warning(
+                        "job stack dump unavailable",
+                        extra={
+                            "diagnostic_event": "job_stack_dump_unavailable",
+                            "diagnostic_version": 1,
+                            "failure_class": self._stack_dump_setup_failure
+                            or self._stack_dump_ready.failure_class
+                            or "handler_not_ready",
+                            **self.logging_extra(),
+                        },
+                    )
+            return
+
+        request_extra = {
+            "diagnostic_version": 1,
+            "child_pid": request.child_pid,
+            "episode_token": request.episode_token,
+            "dump_requested_at_unix_ms": request.requested_at_unix_ms,
+            "last_pong_age_ms": request.last_pong_age_ms,
+            "ping_timeout_ms": round(self._opts.ping_timeout * 1000),
+            "dump_lead_ms": round(0.5 * 1000),
+            **self.logging_extra(),
+        }
+        with contextlib.suppress(Exception):
+            logger.warning(
+                "job stack dump requested" if request.sent else "job stack dump request failed",
+                extra={
+                    **request_extra,
+                    "diagnostic_event": (
+                        "job_stack_dump_requested"
+                        if request.sent
+                        else "job_stack_dump_request_failed"
+                    ),
+                    "failure_class": request.failure_class,
+                },
+            )
+
+        if not request.sent:
+            return
+        if collection is None or collection.stack_text is None or collection.bytes_read == 0:
+            with contextlib.suppress(Exception):
+                logger.warning(
+                    "job stack dump was not collected",
+                    extra={
+                        **request_extra,
+                        "diagnostic_event": "job_stack_dump_collection_failed",
+                        "failure_class": (
+                            collection.failure_class
+                            if collection is not None and collection.failure_class
+                            else "request_without_dump"
+                        ),
+                    },
+                )
+            return
+
+        with contextlib.suppress(Exception):
+            logger.warning(
+                "job stack dump collected",
+                extra={
+                    **request_extra,
+                    "diagnostic_event": "job_stack_dump_collected",
+                    "bytes_read": collection.bytes_read,
+                    "truncated": collection.truncated,
+                    "stack_text": collection.stack_text,
+                },
+            )
 
     def _send_kill_signal(self) -> None:
         """forcefully kill the process"""
@@ -252,6 +460,8 @@ class SupervisedProc(ABC):
         except Exception:
             pass  # initialization failed
 
+        self._arm_stack_dump_trigger()
+
         # the process is killed if it doesn't respond to ping requests
         pong_timeout = aio.sleep(self._opts.ping_timeout)
 
@@ -267,7 +477,9 @@ class SupervisedProc(ABC):
             memory_monitor_task = asyncio.create_task(self._memory_monitor_task())
 
         await self._join_fut
+        self._close_stack_dump_trigger()
         self._exitcode = self._proc.exitcode
+        self._collect_and_emit_stack_dump()
         self._proc.close()
         await aio.cancel_and_wait(ping_task, read_ipc_task, main_task)
 
@@ -291,6 +503,7 @@ class SupervisedProc(ABC):
             try:
                 msg = await channel.arecv_message(self._pch, proto.IPC_MESSAGES)
             except duplex_unix.DuplexClosed:
+                self._close_stack_dump_trigger()
                 break
 
             if isinstance(msg, proto.PongResponse):
@@ -303,6 +516,7 @@ class SupervisedProc(ABC):
 
                 with contextlib.suppress(aio.SleepFinished):
                     pong_timeout.reset()
+                self._on_stack_dump_pong()
 
             if isinstance(msg, proto.Exiting):
                 logger.info(
@@ -326,6 +540,7 @@ class SupervisedProc(ABC):
 
         async def _pong_timeout_co():
             await pong_timeout
+            self._pong_timeout_fired = True
             logger.error("process is unresponsive, killing process", extra=self.logging_extra())
             self._send_kill_signal()
 
@@ -361,6 +576,7 @@ class SupervisedProc(ABC):
                             **self.logging_extra(),
                         },
                     )
+                    self._close_stack_dump_trigger()
                     self._send_kill_signal()
                 elif self._opts.memory_warn_mb > 0 and memory_mb > self._opts.memory_warn_mb:
                     logger.warning(

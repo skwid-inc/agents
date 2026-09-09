@@ -9,6 +9,61 @@ from livekit.protocol import agent
 
 from ..job import JobAcceptArguments, RunningJobInfo
 from . import channel
+from .stack_dump import StackDumpInit, StackDumpReady
+
+
+def _write_stack_dump_init(b: io.BytesIO, value: StackDumpInit | None) -> None:
+    channel.write_bool(b, value is not None)
+    if value is None:
+        return
+    channel.write_bool(b, value.enabled)
+    channel.write_string(b, value.episode_token)
+
+
+def _read_stack_dump_init(b: io.BytesIO) -> StackDumpInit | None:
+    if not channel.read_bool(b):
+        return None
+    return StackDumpInit(
+        enabled=channel.read_bool(b),
+        episode_token=channel.read_string(b),
+    )
+
+
+def _write_stack_dump_ready(b: io.BytesIO, value: StackDumpReady) -> None:
+    channel.write_bool(b, value.ready)
+    channel.write_long(b, value.child_pid)
+    channel.write_string(b, value.episode_token)
+    channel.write_long(b, value.file_device)
+    channel.write_long(b, value.file_inode)
+    channel.write_long(b, value.owner_uid)
+    channel.write_int(b, value.mode)
+    channel.write_int(b, value.link_count)
+    channel.write_bool(b, value.failure_class is not None)
+    if value.failure_class is not None:
+        channel.write_string(b, value.failure_class)
+
+
+def _read_stack_dump_ready(b: io.BytesIO) -> StackDumpReady:
+    ready = channel.read_bool(b)
+    child_pid = channel.read_long(b)
+    episode_token = channel.read_string(b)
+    file_device = channel.read_long(b)
+    file_inode = channel.read_long(b)
+    owner_uid = channel.read_long(b)
+    mode = channel.read_int(b)
+    link_count = channel.read_int(b)
+    failure_class = channel.read_string(b) if channel.read_bool(b) else None
+    return StackDumpReady(
+        ready=ready,
+        child_pid=child_pid,
+        episode_token=episode_token,
+        file_device=file_device,
+        file_inode=file_inode,
+        owner_uid=owner_uid,
+        mode=mode,
+        link_count=link_count,
+        failure_class=failure_class,
+    )
 
 
 @dataclass
@@ -23,18 +78,21 @@ class InitializeRequest:
     high_ping_threshold: float = (
         0  # if ping is higher than this, process is considered unresponsive
     )
+    stack_dump_init: StackDumpInit | None = None
 
     def write(self, b: io.BytesIO) -> None:
         channel.write_bool(b, self.asyncio_debug)
         channel.write_float(b, self.ping_interval)
         channel.write_float(b, self.ping_timeout)
         channel.write_float(b, self.high_ping_threshold)
+        _write_stack_dump_init(b, self.stack_dump_init)
 
     def read(self, b: io.BytesIO) -> None:
         self.asyncio_debug = channel.read_bool(b)
         self.ping_interval = channel.read_float(b)
         self.ping_timeout = channel.read_float(b)
         self.high_ping_threshold = channel.read_float(b)
+        self.stack_dump_init = _read_stack_dump_init(b)
 
 
 @dataclass
@@ -43,12 +101,15 @@ class InitializeResponse:
 
     MSG_ID: ClassVar[int] = 1
     error: str = ""
+    stack_dump_ready: StackDumpReady = field(default_factory=StackDumpReady.disabled)
 
     def write(self, b: io.BytesIO) -> None:
         channel.write_string(b, self.error)
+        _write_stack_dump_ready(b, self.stack_dump_ready)
 
     def read(self, b: io.BytesIO) -> None:
         self.error = channel.read_string(b)
+        self.stack_dump_ready = _read_stack_dump_ready(b)
 
 
 @dataclass
