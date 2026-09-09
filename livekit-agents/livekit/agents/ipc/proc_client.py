@@ -33,12 +33,16 @@ class _ProcClient:
         log_cch: socket.socket | None,
         initialize_fnc: Callable[[InitializeRequest, _ProcClient], None],
         main_task_fnc: Callable[[aio.ChanReceiver[Message]], Coroutine[None, None, None]],
+        *,
+        stack_dump_cch: socket.socket | None = None,
     ) -> None:
         self._mp_cch = mp_cch
         self._log_cch = log_cch
         self._initialize_fnc = initialize_fnc
         self._main_task_fnc = main_task_fnc
         self._initialized = False
+        self._stack_dump_cch = stack_dump_cch
+        self._stack_dump_installed = False
         self._log_handler: LogQueueHandler | None = None
 
     def initialize_logger(self) -> None:
@@ -63,13 +67,18 @@ class _ProcClient:
 
             self._init_req = first_req
             stack_dump_ready = StackDumpReady.disabled()
-            if self._init_req.stack_dump_init is not None:
-                stack_dump_ready = install_stack_dump_signal_handler(self._init_req.stack_dump_init)
+            if self._init_req.stack_dump_init is not None and self._stack_dump_cch is not None:
+                stack_dump_ready = install_stack_dump_signal_handler(
+                    self._init_req.stack_dump_init, self._stack_dump_cch
+                )
+                self._stack_dump_installed = stack_dump_ready.ready
             try:
                 self._initialize_fnc(self._init_req, self)
                 send_message(cch, InitializeResponse(stack_dump_ready=stack_dump_ready))
             except Exception as e:
-                close_stack_dump_signal_handler(unlink=True)
+                if self._stack_dump_installed:
+                    close_stack_dump_signal_handler()
+                    self._stack_dump_installed = False
                 send_message(
                     cch,
                     InitializeResponse(
@@ -83,6 +92,13 @@ class _ProcClient:
             cch.detach()
         except aio.duplex_unix.DuplexClosed as e:
             raise RuntimeError("failed to initialize proc_client") from e
+        finally:
+            if self._stack_dump_cch is not None:
+                self._stack_dump_cch.close()
+                self._stack_dump_cch = None
+            if not self._initialized and self._stack_dump_installed:
+                close_stack_dump_signal_handler()
+                self._stack_dump_installed = False
 
     def run(self) -> None:
         if not self._initialized:
@@ -106,7 +122,9 @@ class _ProcClient:
         except KeyboardInterrupt:
             pass
         finally:
-            close_stack_dump_signal_handler(unlink=False)
+            if self._stack_dump_installed:
+                close_stack_dump_signal_handler()
+                self._stack_dump_installed = False
             if self._log_handler is not None:
                 self._log_handler.close()
 

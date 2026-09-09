@@ -27,11 +27,9 @@ from .stack_dump import (
     StackDumpInit,
     StackDumpReady,
     StackDumpRequestRecord,
-    close_stack_dump_directory,
-    collect_stack_dump_artifact,
-    create_stack_dump_init,
-    stack_dump_enabled,
-    validate_stack_dump_ready,
+    close_stack_dump_fd,
+    collect_stack_dump_fd,
+    receive_stack_dump_fd,
 )
 
 
@@ -82,7 +80,10 @@ class SupervisedProc(ABC):
         self._lock = asyncio.Lock()
         self._stack_dump_ready = StackDumpReady.disabled()
         self._stack_dump_init: StackDumpInit | None = None
-        self._stack_dump_directory_fd: int | None = None
+        self._stack_dump_fd: int | None = None
+        self._stack_dump_pch: socket.socket | None = None
+        self._stack_dump_cch: socket.socket | None = None
+        self._stack_dump_collected = False
         self._stack_dump_trigger: PongStallDumpTrigger | None = None
         self._stack_dump_request_record: StackDumpRequestRecord | None = None
         self._stack_dump_setup_failure: str | None = None
@@ -137,8 +138,16 @@ class SupervisedProc(ABC):
             log_listener = LogQueueListener(log_pch, _add_proc_ctx_log)
             log_listener.start()
 
-            self._proc = self._create_process(mp_cch, mp_log_cch)
-            await self._loop.run_in_executor(None, self._proc.start)
+            try:
+                self._proc = self._create_process(mp_cch, mp_log_cch)
+                await self._loop.run_in_executor(None, self._proc.start)
+            except BaseException:
+                self._close_stack_dump_channels()
+                raise
+            finally:
+                if self._stack_dump_cch is not None:
+                    self._stack_dump_cch.close()
+                    self._stack_dump_cch = None
             mp_log_cch.close()
             mp_cch.close()
 
@@ -168,30 +177,18 @@ class SupervisedProc(ABC):
     async def initialize(self) -> None:
         """initialize the process, this is sending a InitializeRequest message and waiting for a
         InitializeResponse with a timeout"""
-        if (
-            getattr(self._proc, "name", "") == "job_proc"
-            and stack_dump_enabled()
-            and sys.platform != "win32"
-            and hasattr(signal, "SIGUSR1")
-        ):
-            try:
-                self._stack_dump_init, self._stack_dump_directory_fd = create_stack_dump_init()
-            except (OSError, RuntimeError, ValueError):
-                self._stack_dump_setup_failure = "sink_setup_failed"
-
-        await channel.asend_message(
-            self._pch,
-            proto.InitializeRequest(
-                asyncio_debug=self._loop.get_debug(),
-                ping_interval=self._opts.ping_interval,
-                ping_timeout=self._opts.ping_timeout,
-                high_ping_threshold=self._opts.high_ping_threshold,
-                stack_dump_init=self._stack_dump_init,
-            ),
-        )
-
         # wait for the process to become ready
         try:
+            await channel.asend_message(
+                self._pch,
+                proto.InitializeRequest(
+                    asyncio_debug=self._loop.get_debug(),
+                    ping_interval=self._opts.ping_interval,
+                    ping_timeout=self._opts.ping_timeout,
+                    high_ping_threshold=self._opts.high_ping_threshold,
+                    stack_dump_init=self._stack_dump_init,
+                ),
+            )
             init_res = await asyncio.wait_for(
                 channel.arecv_message(self._pch, proto.IPC_MESSAGES),
                 timeout=self._opts.initialize_timeout,
@@ -201,9 +198,6 @@ class SupervisedProc(ABC):
             )
 
             if init_res.error:
-                self._initialize_fut.set_exception(
-                    RuntimeError(f"process initialization failed: {init_res.error}")
-                )
                 logger.error(
                     f"process initialization failed: {init_res.error}",
                     extra=self.logging_extra(),
@@ -212,14 +206,14 @@ class SupervisedProc(ABC):
             else:
                 if (
                     self._stack_dump_init is not None
-                    and self._stack_dump_directory_fd is not None
+                    and self._stack_dump_pch is not None
                     and self._pid is not None
                 ):
-                    self._stack_dump_ready = validate_stack_dump_ready(
+                    self._stack_dump_ready, self._stack_dump_fd = receive_stack_dump_fd(
+                        self._stack_dump_pch,
                         self._stack_dump_init,
                         init_res.stack_dump_ready,
                         expected_pid=self._pid,
-                        directory_fd=self._stack_dump_directory_fd,
                     )
                 self._initialize_fut.set_result(None)
 
@@ -230,9 +224,23 @@ class SupervisedProc(ABC):
             logger.error("initialization timed out, killing process", extra=self.logging_extra())
             self._send_kill_signal()
             raise
-        except Exception as e:  # should be channel.ChannelClosed most of the time
-            self._initialize_fut.set_exception(e)
+        except asyncio.CancelledError:
+            if not self._initialize_fut.done():
+                self._initialize_fut.set_exception(RuntimeError("process initialization cancelled"))
             raise
+        except Exception as e:  # should be channel.ChannelClosed most of the time
+            if not self._initialize_fut.done():
+                self._initialize_fut.set_exception(e)
+            raise
+        finally:
+            self._close_stack_dump_channels()
+
+    def _close_stack_dump_channels(self) -> None:
+        for name in ("_stack_dump_pch", "_stack_dump_cch"):
+            sock = getattr(self, name)
+            if sock is not None:
+                sock.close()
+                setattr(self, name, None)
 
     async def aclose(self) -> None:
         """attempt to gracefully close the supervised process"""
@@ -241,6 +249,9 @@ class SupervisedProc(ABC):
 
         self._closing = True
         self._close_stack_dump_trigger()
+        self._close_stack_dump_channels()
+        if not self._initialize_fut.done():
+            self._initialize_fut.set_exception(RuntimeError("process closed before initialization"))
         with contextlib.suppress(duplex_unix.DuplexClosed):
             await channel.asend_message(self._pch, proto.ShutdownRequest())
 
@@ -268,6 +279,9 @@ class SupervisedProc(ABC):
 
         self._closing = True
         self._close_stack_dump_trigger()
+        self._close_stack_dump_channels()
+        if not self._initialize_fut.done():
+            self._initialize_fut.set_exception(RuntimeError("process killed before initialization"))
         self._send_kill_signal()
 
         async with self._lock:
@@ -335,20 +349,18 @@ class SupervisedProc(ABC):
             self._stack_dump_trigger.close()
 
     def _collect_and_emit_stack_dump(self) -> None:
+        if self._stack_dump_collected:
+            return
+        self._stack_dump_collected = True
         init = self._stack_dump_init
-        directory_fd = self._stack_dump_directory_fd
-        self._stack_dump_directory_fd = None
+        fd, self._stack_dump_fd = self._stack_dump_fd, None
+        self._close_stack_dump_channels()
         collection = None
-        if init is not None and directory_fd is not None:
-            try:
-                if self._stack_dump_ready.ready:
-                    collection = collect_stack_dump_artifact(
-                        init,
-                        self._stack_dump_ready,
-                        directory_fd,
-                    )
-            finally:
-                close_stack_dump_directory(init, directory_fd)
+        if fd is not None:
+            if self._stack_dump_request_record is not None and self._stack_dump_request_record.sent:
+                collection = collect_stack_dump_fd(fd, self._stack_dump_ready)
+            else:
+                close_stack_dump_fd(fd)
 
         request = self._stack_dump_request_record
         if request is None:

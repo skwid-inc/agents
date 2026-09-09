@@ -14,6 +14,7 @@ from . import channel, proto
 from .inference_executor import InferenceExecutor
 from .job_executor import JobStatus
 from .job_proc_lazy_main import ProcStartArgs, proc_main
+from .stack_dump import create_stack_dump_channel, stack_dump_enabled, stack_dump_supported
 from .supervised_proc import SupervisedProc
 
 
@@ -92,12 +93,25 @@ class ProcJobExecutor(SupervisedProc):
         return self._running_job
 
     def _create_process(self, cch: socket.socket, log_cch: socket.socket) -> mp.Process:
+        if stack_dump_enabled() and not stack_dump_supported():
+            self._stack_dump_setup_failure = "unsupported_platform"
+        if stack_dump_enabled() and stack_dump_supported():
+            try:
+                (
+                    self._stack_dump_init,
+                    self._stack_dump_pch,
+                    self._stack_dump_cch,
+                ) = create_stack_dump_channel()
+            except (OSError, RuntimeError, ValueError):
+                self._stack_dump_setup_failure = "transfer_setup_failed"
         proc_args = ProcStartArgs(
             initialize_process_fnc=self._initialize_process_fnc,
             job_entrypoint_fnc=self._job_entrypoint_fnc,
             log_cch=log_cch,
             mp_cch=cch,
             user_arguments=self._user_args,
+            stack_dump_cch=self._stack_dump_cch,
+            stack_dump_parent_cch=self._stack_dump_pch,
         )
 
         return self._mp_ctx.Process(  # type: ignore

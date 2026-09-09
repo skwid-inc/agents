@@ -1,34 +1,32 @@
 from __future__ import annotations
 
+import array
 import asyncio
 import contextlib
 import faulthandler
+import json
 import os
 import secrets
 import signal
+import socket
 import stat
+import struct
 import sys
-import tempfile
+import weakref
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import TextIO
+from dataclasses import asdict, dataclass
 
 ENABLED_ENV = "LK_DUMP_STACK_TRACES"
 TRUE_VALUES = frozenset({"1", "true", "yes"})
 STACK_DUMP_LEAD_SECONDS = 0.5
 MAX_STACK_DUMP_BYTES = 64 * 1024
-PRIVATE_DIRECTORY_MODE = 0o700
 PRIVATE_FILE_MODE = 0o600
+MAX_TRANSFER_BYTES = 1024
 
 
 @dataclass(frozen=True)
 class StackDumpInit:
     enabled: bool = False
-    directory_path: str = ""
-    directory_device: int = 0
-    directory_inode: int = 0
-    directory_owner_uid: int = 0
-    directory_mode: int = 0
     episode_token: str = ""
 
 
@@ -37,9 +35,6 @@ class StackDumpReady:
     ready: bool = False
     child_pid: int = 0
     episode_token: str = ""
-    relative_basename: str = ""
-    directory_device: int = 0
-    directory_inode: int = 0
     file_device: int = 0
     file_inode: int = 0
     owner_uid: int = 0
@@ -70,51 +65,61 @@ class StackDumpCollection:
     failure_class: str | None = None
 
 
-@dataclass
-class _StackDumpProducer:
-    stream: TextIO
-    directory_fd: int
-    ready: StackDumpReady
-    created: bool
+_producer_fd: int | None = None
+_parent_fds: set[int] = set()
+_transfer_sockets: weakref.WeakSet[socket.socket] = weakref.WeakSet()
 
 
-_producer: _StackDumpProducer | None = None
+def close_inherited_stack_dump_resources(keep: socket.socket | None) -> None:
+    """A forked job must not retain other jobs' diagnostic resources."""
+    for sock in tuple(_transfer_sockets):
+        if sock is not keep:
+            sock.close()
+    _transfer_sockets.clear()
+    for fd in tuple(_parent_fds):
+        close_stack_dump_fd(fd)
+
+
+def close_stack_dump_fd(fd: int) -> None:
+    _parent_fds.discard(fd)
+    with contextlib.suppress(OSError):
+        os.close(fd)
 
 
 def stack_dump_enabled() -> bool:
     return os.getenv(ENABLED_ENV, "").strip().lower() in TRUE_VALUES
 
 
+def stack_dump_supported() -> bool:
+    return sys.platform == "linux" and all(
+        hasattr(module, name)
+        for module, name in (
+            (os, "O_TMPFILE"),
+            (signal, "SIGUSR1"),
+            (socket, "SCM_RIGHTS"),
+            (socket, "SCM_CREDENTIALS"),
+            (socket, "SO_PASSCRED"),
+            (socket, "MSG_CMSG_CLOEXEC"),
+        )
+    )
+
+
 def stack_dump_signal_handler_ready() -> bool:
-    return _producer is not None
+    return _producer_fd is not None
 
 
-def _directory_flags() -> int:
-    return (
-        os.O_RDONLY
-        | getattr(os, "O_DIRECTORY", 0)
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-    )
-
-
-def _file_flags(access: int) -> int:
-    return access | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-
-
-def _read_file_flags() -> int:
-    return _file_flags(os.O_RDONLY) | getattr(os, "O_NONBLOCK", 0)
-
-
-def _valid_directory(info: os.stat_result, init: StackDumpInit) -> bool:
-    return (
-        stat.S_ISDIR(info.st_mode)
-        and info.st_dev == init.directory_device
-        and info.st_ino == init.directory_inode
-        and info.st_uid == init.directory_owner_uid
-        and stat.S_IMODE(info.st_mode) == PRIVATE_DIRECTORY_MODE
-        and init.directory_mode == PRIVATE_DIRECTORY_MODE
-    )
+def create_stack_dump_channel() -> tuple[StackDumpInit, socket.socket, socket.socket]:
+    parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+    try:
+        parent.setsockopt(socket.SOL_SOCKET, socket.SO_PASSCRED, 1)
+        parent.setblocking(False)
+        child.setblocking(False)
+        _transfer_sockets.update((parent, child))
+        return StackDumpInit(enabled=True, episode_token=secrets.token_hex(16)), parent, child
+    except BaseException:
+        parent.close()
+        child.close()
+        raise
 
 
 def _valid_file(info: os.stat_result, ready: StackDumpReady) -> bool:
@@ -122,249 +127,177 @@ def _valid_file(info: os.stat_result, ready: StackDumpReady) -> bool:
         stat.S_ISREG(info.st_mode)
         and info.st_dev == ready.file_device
         and info.st_ino == ready.file_inode
-        and info.st_uid == ready.owner_uid
-        and stat.S_IMODE(info.st_mode) == PRIVATE_FILE_MODE
-        and ready.mode == PRIVATE_FILE_MODE
-        and info.st_nlink == 1
-        and ready.link_count == 1
+        and info.st_uid == ready.owner_uid == os.geteuid()
+        and stat.S_IMODE(info.st_mode) == ready.mode == PRIVATE_FILE_MODE
+        and info.st_nlink == ready.link_count == 0
     )
 
 
-def create_stack_dump_init(base_directory: str = "/dev/shm") -> tuple[StackDumpInit, int]:
-    token = secrets.token_hex(16)
-    directory_path = tempfile.mkdtemp(prefix=f"livekit-stack-{token}-", dir=base_directory)
-    directory_fd: int | None = None
+def _valid_token(token: str) -> bool:
+    return len(token) == 32 and all(char in "0123456789abcdef" for char in token)
+
+
+def install_stack_dump_signal_handler(
+    init: StackDumpInit, transfer_socket: socket.socket | None
+) -> StackDumpReady:
+    global _producer_fd
+    fd: int | None = None
+    registered = False
+    failure_class = "file_open_failed"
     try:
-        os.chmod(directory_path, PRIVATE_DIRECTORY_MODE)
-        directory_fd = os.open(directory_path, _directory_flags())
-        info = os.fstat(directory_fd)
-        if (
-            not stat.S_ISDIR(info.st_mode)
-            or info.st_uid != os.geteuid()
-            or stat.S_IMODE(info.st_mode) != PRIVATE_DIRECTORY_MODE
-        ):
-            raise PermissionError("invalid stack dump directory ownership")
-        return (
-            StackDumpInit(
-                enabled=True,
-                directory_path=directory_path,
-                directory_device=info.st_dev,
-                directory_inode=info.st_ino,
-                directory_owner_uid=info.st_uid,
-                directory_mode=stat.S_IMODE(info.st_mode),
-                episode_token=token,
-            ),
-            directory_fd,
-        )
-    except BaseException:
-        if directory_fd is not None:
-            os.close(directory_fd)
-        with contextlib.suppress(OSError):
-            os.rmdir(directory_path)
-        raise
-
-
-def install_stack_dump_signal_handler(init: StackDumpInit) -> StackDumpReady:
-    global _producer
-
-    if not init.enabled or not stack_dump_enabled():
-        return StackDumpReady.disabled("disabled")
-    if sys.platform == "win32" or not hasattr(signal, "SIGUSR1"):
-        return StackDumpReady.disabled("unsupported_platform")
-    if _producer is not None:
-        return StackDumpReady.disabled("already_installed")
-
-    directory_fd: int | None = None
-    artifact_fd: int | None = None
-    stream: TextIO | None = None
-    ready: StackDumpReady | None = None
-    created = False
-    basename = f"stack-{os.getpid()}-{init.episode_token}.dump"
-    failure_class = "directory_invalid"
-    try:
-        directory_fd = os.open(init.directory_path, _directory_flags())
-        directory_info = os.fstat(directory_fd)
-        if not _valid_directory(directory_info, init):
-            raise PermissionError("stack dump directory identity mismatch")
-
-        failure_class = "file_open_failed"
-        artifact_fd = os.open(
-            basename,
-            _file_flags(os.O_WRONLY | os.O_CREAT | os.O_EXCL),
-            PRIVATE_FILE_MODE,
-            dir_fd=directory_fd,
-        )
-        created = True
-        file_info = os.fstat(artifact_fd)
+        if not init.enabled or not stack_dump_enabled():
+            return StackDumpReady.disabled("disabled")
+        if not stack_dump_supported():
+            return StackDumpReady.disabled("unsupported_platform")
+        if transfer_socket is None or not _valid_token(init.episode_token):
+            return StackDumpReady.disabled("transfer_unavailable")
+        if _producer_fd is not None:
+            return StackDumpReady.disabled("already_installed")
+        # Child-created anonymous inode; O_EXCL forbids later linking. No fallback.
+        fd = os.open("/dev/shm", os.O_TMPFILE | os.O_EXCL | os.O_RDWR | os.O_CLOEXEC, 0o600)
+        os.fchmod(fd, PRIVATE_FILE_MODE)
+        info = os.fstat(fd)
         ready = StackDumpReady(
             ready=True,
             child_pid=os.getpid(),
             episode_token=init.episode_token,
-            relative_basename=basename,
-            directory_device=directory_info.st_dev,
-            directory_inode=directory_info.st_ino,
-            file_device=file_info.st_dev,
-            file_inode=file_info.st_ino,
-            owner_uid=file_info.st_uid,
-            mode=stat.S_IMODE(file_info.st_mode),
-            link_count=file_info.st_nlink,
+            file_device=info.st_dev,
+            file_inode=info.st_ino,
+            owner_uid=info.st_uid,
+            mode=stat.S_IMODE(info.st_mode),
+            link_count=info.st_nlink,
         )
         failure_class = "file_invalid"
-        if not _valid_file(file_info, ready) or file_info.st_uid != os.geteuid():
-            raise PermissionError("stack dump file ownership mismatch")
-
-        failure_class = "file_wrap_failed"
-        stream = os.fdopen(artifact_fd, "w", encoding="utf-8", buffering=1)
-        artifact_fd = None
+        if not _valid_file(info, ready):
+            return StackDumpReady.disabled(failure_class)
         failure_class = "handler_registration_failed"
-        faulthandler.register(signal.SIGUSR1, file=stream, all_threads=True, chain=False)
-        _producer = _StackDumpProducer(
-            stream=stream,
-            directory_fd=directory_fd,
-            ready=ready,
-            created=created,
+        faulthandler.register(signal.SIGUSR1, file=fd, all_threads=True, chain=False)
+        registered = True
+        failure_class = "transfer_failed"
+        payload = json.dumps(asdict(ready), separators=(",", ":")).encode("utf-8")
+        if len(payload) > MAX_TRANSFER_BYTES:
+            return StackDumpReady.disabled(failure_class)
+        transferred = transfer_socket.sendmsg(
+            [payload],
+            [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", [fd]))],
+            socket.MSG_DONTWAIT,
         )
-        directory_fd = None
-        stream = None
+        if transferred != len(payload):
+            return StackDumpReady.disabled(failure_class)
+        _producer_fd, fd = fd, None
         return ready
     except (OSError, RuntimeError, ValueError):
-        if stream is not None:
-            stream.close()
-        if artifact_fd is not None:
-            os.close(artifact_fd)
-        if created and directory_fd is not None and ready is not None:
-            _unlink_owned_file(directory_fd, ready)
-        if directory_fd is not None:
-            os.close(directory_fd)
         return StackDumpReady.disabled(failure_class)
+    finally:
+        if fd is not None:
+            if registered:
+                with contextlib.suppress(OSError, RuntimeError):
+                    faulthandler.unregister(signal.SIGUSR1)
+            os.close(fd)
+        if transfer_socket is not None:
+            transfer_socket.close()
 
 
-def _unlink_owned_file(directory_fd: int, ready: StackDumpReady) -> bool:
-    try:
-        info = os.stat(ready.relative_basename, dir_fd=directory_fd, follow_symlinks=False)
-        if not _valid_file(info, ready):
-            return False
-        os.unlink(ready.relative_basename, dir_fd=directory_fd)
-        return True
-    except OSError:
-        return False
+def close_stack_dump_signal_handler() -> None:
+    global _producer_fd
+    fd, _producer_fd = _producer_fd, None
+    if fd is not None:
+        with contextlib.suppress(OSError, RuntimeError):
+            faulthandler.unregister(signal.SIGUSR1)
+        os.close(fd)
 
 
-def close_stack_dump_signal_handler(*, unlink: bool) -> None:
-    global _producer
-
-    producer = _producer
-    _producer = None
-    if producer is None:
-        return
-
-    with contextlib.suppress(OSError, RuntimeError):
-        faulthandler.unregister(signal.SIGUSR1)
-    producer.stream.close()
-    if unlink and producer.created:
-        _unlink_owned_file(producer.directory_fd, producer.ready)
-    os.close(producer.directory_fd)
-
-
-def validate_stack_dump_ready(
+def receive_stack_dump_fd(
+    transfer_socket: socket.socket,
     init: StackDumpInit,
     ready: StackDumpReady,
     *,
     expected_pid: int,
-    directory_fd: int,
-) -> StackDumpReady:
-    expected_basename = f"stack-{expected_pid}-{init.episode_token}.dump"
-    if (
-        not init.enabled
-        or not ready.ready
-        or ready.child_pid != expected_pid
-        or ready.episode_token != init.episode_token
-        or ready.relative_basename != expected_basename
-        or ready.directory_device != init.directory_device
-        or ready.directory_inode != init.directory_inode
-        or ready.owner_uid != init.directory_owner_uid
-    ):
-        return StackDumpReady.disabled("identity_mismatch")
-
+) -> tuple[StackDumpReady, int | None]:
+    """Adopt one FD after ordinary readiness; never wait for ancillary data."""
+    fds: list[int] = []
     try:
-        if not _valid_directory(os.fstat(directory_fd), init):
-            return StackDumpReady.disabled("identity_mismatch")
-        artifact_fd = os.open(
-            ready.relative_basename,
-            _read_file_flags(),
-            dir_fd=directory_fd,
+        if (
+            not stack_dump_supported()
+            or not init.enabled
+            or not ready.ready
+            or ready.child_pid != expected_pid
+            or ready.episode_token != init.episode_token
+            or not _valid_token(init.episode_token)
+        ):
+            return StackDumpReady.disabled(ready.failure_class or "identity_mismatch"), None
+        data, ancillary, flags, _ = transfer_socket.recvmsg(
+            MAX_TRANSFER_BYTES,
+            socket.CMSG_SPACE(8 * array.array("i").itemsize) + socket.CMSG_SPACE(12),
+            socket.MSG_DONTWAIT | socket.MSG_CMSG_CLOEXEC,
         )
-        try:
-            if not _valid_file(os.fstat(artifact_fd), ready):
-                return StackDumpReady.disabled("identity_mismatch")
-        finally:
-            os.close(artifact_fd)
-    except OSError:
-        return StackDumpReady.disabled("identity_mismatch")
-    return ready
+        credentials = []
+        invalid_ancillary = False
+        for level, kind, raw in ancillary:
+            if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
+                values = array.array("i")
+                values.frombytes(raw[: len(raw) - len(raw) % values.itemsize])
+                fds.extend(values)
+                invalid_ancillary |= len(raw) % values.itemsize != 0
+            elif level == socket.SOL_SOCKET and kind == socket.SCM_CREDENTIALS:
+                if len(raw) == 12:
+                    credentials.append(struct.unpack("3i", raw))
+                else:
+                    invalid_ancillary = True
+            else:
+                invalid_ancillary = True
+        if (
+            flags & (socket.MSG_TRUNC | socket.MSG_CTRUNC)
+            or invalid_ancillary
+            or len(fds) != 1
+            or credentials != [(expected_pid, os.getuid(), os.getgid())]
+            or json.loads(data) != asdict(ready)
+        ):
+            return StackDumpReady.disabled("transfer_invalid"), None
+        import fcntl
+
+        if (
+            not _valid_file(os.fstat(fds[0]), ready)
+            or os.get_inheritable(fds[0])
+            or fcntl.fcntl(fds[0], fcntl.F_GETFL) & os.O_ACCMODE not in (os.O_RDONLY, os.O_RDWR)
+        ):
+            return StackDumpReady.disabled("identity_mismatch"), None
+        fd = fds.pop()
+        _parent_fds.add(fd)
+        return ready, fd
+    except (OSError, RuntimeError, ValueError, TypeError):
+        return StackDumpReady.disabled("transfer_failed"), None
+    finally:
+        for fd in fds:
+            os.close(fd)
+        # Closing also releases descriptors still queued by failed initializers.
+        transfer_socket.close()
 
 
-def collect_stack_dump_artifact(
-    init: StackDumpInit,
-    ready: StackDumpReady,
-    directory_fd: int,
-) -> StackDumpCollection:
-    artifact_fd: int | None = None
-    identity_validated = False
+def collect_stack_dump_fd(fd: int, ready: StackDumpReady) -> StackDumpCollection:
+    """Called only after child join. Consume ownership even when validation/read fails."""
     try:
-        if not _valid_directory(os.fstat(directory_fd), init):
-            return StackDumpCollection(failure_class="directory_identity_mismatch")
-        artifact_fd = os.open(
-            ready.relative_basename,
-            _read_file_flags(),
-            dir_fd=directory_fd,
-        )
-        if not _valid_file(os.fstat(artifact_fd), ready):
+        if not _valid_file(os.fstat(fd), ready):
             return StackDumpCollection(failure_class="artifact_identity_mismatch")
-        identity_validated = True
-
         chunks: list[bytes] = []
-        remaining = MAX_STACK_DUMP_BYTES + 1
-        while remaining:
-            chunk = os.read(artifact_fd, min(8192, remaining))
+        offset = 0
+        while offset <= MAX_STACK_DUMP_BYTES:
+            chunk = os.pread(fd, min(8192, MAX_STACK_DUMP_BYTES + 1 - offset), offset)
             if not chunk:
                 break
             chunks.append(chunk)
-            remaining -= len(chunk)
+            offset += len(chunk)
         raw = b"".join(chunks)
-        truncated = len(raw) > MAX_STACK_DUMP_BYTES
         retained = raw[:MAX_STACK_DUMP_BYTES]
         return StackDumpCollection(
             stack_text=retained.decode("utf-8", errors="replace"),
             bytes_read=len(retained),
-            truncated=truncated,
+            truncated=len(raw) > MAX_STACK_DUMP_BYTES,
         )
-    except FileNotFoundError:
-        return StackDumpCollection(failure_class="artifact_missing")
     except OSError:
         return StackDumpCollection(failure_class="artifact_read_failed")
     finally:
-        if artifact_fd is not None:
-            os.close(artifact_fd)
-        if identity_validated:
-            _unlink_owned_file(directory_fd, ready)
-
-
-def close_stack_dump_directory(init: StackDumpInit, directory_fd: int) -> None:
-    try:
-        info = os.fstat(directory_fd)
-    except OSError:
-        return
-    finally:
-        with contextlib.suppress(OSError):
-            os.close(directory_fd)
-
-    try:
-        path_info = os.stat(init.directory_path, follow_symlinks=False)
-        if _valid_directory(info, init) and _valid_directory(path_info, init):
-            os.rmdir(init.directory_path)
-    except OSError:
-        pass
+        close_stack_dump_fd(fd)
 
 
 class PongStallDumpTrigger:

@@ -17,11 +17,6 @@ def _write_stack_dump_init(b: io.BytesIO, value: StackDumpInit | None) -> None:
     if value is None:
         return
     channel.write_bool(b, value.enabled)
-    channel.write_string(b, value.directory_path)
-    channel.write_long(b, value.directory_device)
-    channel.write_long(b, value.directory_inode)
-    channel.write_long(b, value.directory_owner_uid)
-    channel.write_int(b, value.directory_mode)
     channel.write_string(b, value.episode_token)
 
 
@@ -30,11 +25,6 @@ def _read_stack_dump_init(b: io.BytesIO) -> StackDumpInit | None:
         return None
     return StackDumpInit(
         enabled=channel.read_bool(b),
-        directory_path=channel.read_string(b),
-        directory_device=channel.read_long(b),
-        directory_inode=channel.read_long(b),
-        directory_owner_uid=channel.read_long(b),
-        directory_mode=channel.read_int(b),
         episode_token=channel.read_string(b),
     )
 
@@ -43,9 +33,6 @@ def _write_stack_dump_ready(b: io.BytesIO, value: StackDumpReady) -> None:
     channel.write_bool(b, value.ready)
     channel.write_long(b, value.child_pid)
     channel.write_string(b, value.episode_token)
-    channel.write_string(b, value.relative_basename)
-    channel.write_long(b, value.directory_device)
-    channel.write_long(b, value.directory_inode)
     channel.write_long(b, value.file_device)
     channel.write_long(b, value.file_inode)
     channel.write_long(b, value.owner_uid)
@@ -60,9 +47,6 @@ def _read_stack_dump_ready(b: io.BytesIO) -> StackDumpReady:
     ready = channel.read_bool(b)
     child_pid = channel.read_long(b)
     episode_token = channel.read_string(b)
-    relative_basename = channel.read_string(b)
-    directory_device = channel.read_long(b)
-    directory_inode = channel.read_long(b)
     file_device = channel.read_long(b)
     file_inode = channel.read_long(b)
     owner_uid = channel.read_long(b)
@@ -73,9 +57,6 @@ def _read_stack_dump_ready(b: io.BytesIO) -> StackDumpReady:
         ready=ready,
         child_pid=child_pid,
         episode_token=episode_token,
-        relative_basename=relative_basename,
-        directory_device=directory_device,
-        directory_inode=directory_inode,
         file_device=file_device,
         file_inode=file_inode,
         owner_uid=owner_uid,

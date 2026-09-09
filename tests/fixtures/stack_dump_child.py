@@ -6,6 +6,7 @@ import json
 import math
 import os
 import signal
+import socket
 import sys
 import threading
 import time
@@ -41,6 +42,18 @@ def initialize_job_process(_process) -> None:
     return None
 
 
+def fail_job_process(_process) -> None:
+    raise RuntimeError("test initializer failure")
+
+
+def stall_job_process(_process) -> None:
+    time.sleep(60)
+
+
+def crash_job_process(_process) -> None:
+    os._exit(23)
+
+
 async def unused_job_entrypoint(_context) -> None:
     return None
 
@@ -52,6 +65,7 @@ def _main() -> int:
     parser.add_argument("--saturate-stderr", action="store_true")
     parser.add_argument("--heartbeat", action="store_true")
     parser.add_argument("--stderr-sink", action="store_true")
+    parser.add_argument("--transfer-fd", type=int)
     args = parser.parse_args()
 
     stderr_filled_bytes = 0
@@ -70,7 +84,9 @@ def _main() -> int:
         ready = None
     else:
         init = stack_dump.StackDumpInit(**json.loads(args.init))
-        ready = stack_dump.install_stack_dump_signal_handler(init)
+        ready = stack_dump.install_stack_dump_signal_handler(
+            init, socket.socket(fileno=args.transfer_fd)
+        )
         if not ready.ready:
             _emit(event="not_ready", identity=asdict(ready))
             return 3
@@ -123,7 +139,7 @@ def _main() -> int:
     if args.stderr_sink:
         faulthandler.unregister(signal.SIGUSR1)
     else:
-        stack_dump.close_stack_dump_signal_handler(unlink=False)
+        stack_dump.close_stack_dump_signal_handler()
     return 0
 
 

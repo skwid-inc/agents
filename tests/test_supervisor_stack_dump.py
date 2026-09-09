@@ -1,82 +1,98 @@
 from __future__ import annotations
 
+import array
+import asyncio
 import contextlib
+import errno
+import hashlib
 import inspect
 import json
+import multiprocessing as mp
 import os
 import select
 import signal
 import socket
+import stat
 import subprocess
 import sys
-import threading
 import time
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
-from livekit.agents.ipc import channel, proc_client, proto, stack_dump, supervised_proc
+from livekit.agents.ipc import channel, proto, stack_dump, supervised_proc
 from livekit.agents.ipc.job_proc_executor import ProcJobExecutor
 from livekit.agents.utils.aio import duplex_unix
 
 FIXTURE = Path(__file__).parent / "fixtures" / "stack_dump_child.py"
+LINUX = stack_dump.stack_dump_supported()
+linux = pytest.mark.skipif(not LINUX, reason="requires Linux anonymous-FD diagnostics")
+
+
+def test_required_linux_gate_is_not_silently_skipped():
+    if os.getenv("STACK_DUMP_LINUX_REQUIRED") == "1":
+        assert LINUX and sys.version_info[:2] == (3, 13)
+        assert __import__("platform").machine() == "aarch64"
+
+
+def test_descriptor_transport_has_no_pathname_cleanup():
+    """The former strict-XFAIL race has no pathname operation to interleave."""
+    source = inspect.getsource(stack_dump)
+    for forbidden in ("os.unlink", "os.rmdir", "mkdtemp", "relative_basename", "directory_path"):
+        assert forbidden not in source
+    assert set(stack_dump.StackDumpInit.__dataclass_fields__) == {"enabled", "episode_token"}
 
 
 def _round_trip(message):
     return channel._read_message(channel._write_message(message), proto.IPC_MESSAGES)
 
 
-def test_initialize_protocol_round_trips_complete_stack_dump_identity(tmp_path):
-    request = proto.InitializeRequest(
-        stack_dump_init=stack_dump.StackDumpInit(
-            enabled=True,
-            directory_path=str(tmp_path),
-            directory_device=101,
-            directory_inode=202,
-            directory_owner_uid=303,
-            directory_mode=0o700,
-            episode_token="a" * 32,
-        )
+def test_initialize_protocol_round_trips_complete_stack_dump_identity():
+    init = stack_dump.StackDumpInit(enabled=True, episode_token="a" * 32)
+    ready = stack_dump.StackDumpReady(
+        ready=True,
+        child_pid=404,
+        episode_token=init.episode_token,
+        file_device=505,
+        file_inode=606,
+        owner_uid=303,
+        mode=0o600,
+        link_count=0,
     )
-    decoded_request = _round_trip(request)
-    assert decoded_request.stack_dump_init == request.stack_dump_init
+    assert _round_trip(proto.InitializeRequest(stack_dump_init=init)).stack_dump_init == init
+    assert _round_trip(proto.InitializeResponse(stack_dump_ready=ready)).stack_dump_ready == ready
 
-    response = proto.InitializeResponse(
-        stack_dump_ready=stack_dump.StackDumpReady(
-            ready=True,
-            child_pid=404,
-            episode_token="a" * 32,
-            relative_basename=f"stack-404-{'a' * 32}.dump",
-            directory_device=101,
-            directory_inode=202,
-            file_device=505,
-            file_inode=606,
-            owner_uid=303,
-            mode=0o600,
-            link_count=1,
-        )
+
+def test_initialize_protocol_defaults_and_exact_base_bytes_are_disabled():
+    import io
+
+    # Base has only these fields and ignores trailing bytes from the new encoder.
+    request = io.BytesIO()
+    channel.write_int(request, 0)
+    channel.write_bool(request, False)
+    for _ in range(3):
+        channel.write_float(request, 0)
+    response = io.BytesIO()
+    channel.write_int(response, 1)
+    channel.write_string(response, "")
+    assert channel._read_message(request.getvalue(), proto.IPC_MESSAGES).stack_dump_init is None
+    assert (
+        channel._read_message(response.getvalue(), proto.IPC_MESSAGES).stack_dump_ready
+        == stack_dump.StackDumpReady.disabled()
     )
-    decoded_response = _round_trip(response)
-    assert decoded_response.stack_dump_ready == response.stack_dump_ready
-
-
-def test_initialize_protocol_defaults_are_disabled():
-    request = _round_trip(proto.InitializeRequest())
-    response = _round_trip(proto.InitializeResponse())
-    assert request.stack_dump_init is None
-    assert response.stack_dump_ready == stack_dump.StackDumpReady.disabled()
+    assert channel._write_message(proto.InitializeRequest()).startswith(request.getvalue())
+    assert channel._write_message(proto.InitializeResponse()).startswith(response.getvalue())
 
 
 @pytest.mark.parametrize("value", ["1", "true", "TRUE", " yes "])
-def test_stack_dump_flag_accepts_only_explicit_true_values(monkeypatch, value):
+def test_flag_accepts_only_explicit_true_values(monkeypatch, value):
     monkeypatch.setenv(stack_dump.ENABLED_ENV, value)
     assert stack_dump.stack_dump_enabled()
 
 
 @pytest.mark.parametrize("value", [None, "", "0", "false", "no", "on", "enabled"])
-def test_stack_dump_flag_rejects_every_other_value(monkeypatch, value):
+def test_flag_rejects_other_values(monkeypatch, value):
     if value is None:
         monkeypatch.delenv(stack_dump.ENABLED_ENV, raising=False)
     else:
@@ -84,253 +100,231 @@ def test_stack_dump_flag_rejects_every_other_value(monkeypatch, value):
     assert not stack_dump.stack_dump_enabled()
 
 
-@pytest.mark.skipif(not hasattr(signal, "SIGUSR1"), reason="requires SIGUSR1")
-def test_child_file_is_exclusive_owned_and_collectable(tmp_path, monkeypatch):
+def test_disabled_and_unsupported_setup_never_open_a_sink(monkeypatch):
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("unexpected diagnostic open")
+
+    monkeypatch.setattr(stack_dump.os, "open", unexpected)
+    monkeypatch.delenv(stack_dump.ENABLED_ENV, raising=False)
+    assert not stack_dump.install_stack_dump_signal_handler(stack_dump.StackDumpInit(), None).ready
     monkeypatch.setenv(stack_dump.ENABLED_ENV, "true")
-    init, directory_fd = stack_dump.create_stack_dump_init(str(tmp_path))
-    ready = stack_dump.install_stack_dump_signal_handler(init)
+    monkeypatch.setattr(stack_dump, "stack_dump_supported", lambda: False)
+    assert (
+        stack_dump.install_stack_dump_signal_handler(
+            stack_dump.StackDumpInit(enabled=True), None
+        ).failure_class
+        == "unsupported_platform"
+    )
+
+
+def _fd_count():
+    return len(os.listdir("/proc/self/fd"))
+
+
+def _anonymous():
+    return os.open("/dev/shm", os.O_TMPFILE | os.O_EXCL | os.O_RDWR | os.O_CLOEXEC, 0o600)
+
+
+def _ready(fd, token):
+    info = os.fstat(fd)
+    return stack_dump.StackDumpReady(
+        ready=True,
+        child_pid=os.getpid(),
+        episode_token=token,
+        file_device=info.st_dev,
+        file_inode=info.st_ino,
+        owner_uid=info.st_uid,
+        mode=stat.S_IMODE(info.st_mode),
+        link_count=info.st_nlink,
+    )
+
+
+@linux
+def test_child_anonymous_sink_registration_transfer_and_close(monkeypatch):
+    monkeypatch.setenv(stack_dump.ENABLED_ENV, "true")
+    before = _fd_count()
+    names = os.listdir("/dev/shm")
+    init, parent, child = stack_dump.create_stack_dump_channel()
+    ready = stack_dump.install_stack_dump_signal_handler(init, child)
+    fd = None
     try:
-        assert ready.ready
-        assert ready.child_pid == os.getpid()
-        assert ready.episode_token == init.episode_token
-        assert ready.relative_basename == f"stack-{os.getpid()}-{init.episode_token}.dump"
-        assert ready.directory_device == init.directory_device
-        assert ready.directory_inode == init.directory_inode
-        assert ready.owner_uid == os.geteuid()
-        assert ready.mode == 0o600
-        assert ready.link_count == 1
-
-        validated = stack_dump.validate_stack_dump_ready(
-            init, ready, expected_pid=os.getpid(), directory_fd=directory_fd
+        assert ready.ready and ready.link_count == 0 and ready.mode == 0o600
+        validated, fd = stack_dump.receive_stack_dump_fd(
+            parent, init, ready, expected_pid=os.getpid()
         )
-        assert validated.ready
-
+        assert validated == ready and fd is not None
+        assert not os.get_inheritable(fd)
         os.kill(os.getpid(), signal.SIGUSR1)
+        stack_dump.close_stack_dump_signal_handler()
+        collected = stack_dump.collect_stack_dump_fd(fd, ready)
+        fd = None
+        assert "test_child_anonymous_sink_registration_transfer_and_close" in collected.stack_text
+        assert collected.bytes_read > 0
     finally:
-        stack_dump.close_stack_dump_signal_handler(unlink=False)
-
-    collected = stack_dump.collect_stack_dump_artifact(init, ready, directory_fd)
-    assert collected.failure_class is None
-    assert collected.stack_text is not None
-    assert "test_child_file_is_exclusive_owned_and_collectable" in collected.stack_text
-    assert collected.bytes_read > 0
-    assert not collected.truncated
-    assert not Path(init.directory_path, ready.relative_basename).exists()
-    stack_dump.close_stack_dump_directory(init, directory_fd)
-    assert not Path(init.directory_path).exists()
+        stack_dump.close_stack_dump_signal_handler()
+        parent.close()
+        child.close()
+        if fd is not None:
+            os.close(fd)
+    assert os.listdir("/dev/shm") == names
+    assert _fd_count() == before
 
 
-@pytest.mark.skipif(not hasattr(signal, "SIGUSR1"), reason="requires SIGUSR1")
-def test_preexisting_file_is_never_unlinked(tmp_path, monkeypatch):
+@linux
+@pytest.mark.parametrize("failure", ["open", "register", "full", "closed"])
+def test_producer_failure_closes_every_fd_and_unregisters(monkeypatch, failure):
     monkeypatch.setenv(stack_dump.ENABLED_ENV, "true")
-    init, directory_fd = stack_dump.create_stack_dump_init(str(tmp_path))
-    sentinel = Path(init.directory_path, f"stack-{os.getpid()}-{init.episode_token}.dump")
-    sentinel.write_text("keep me")
-    sentinel.chmod(0o600)
+    before = _fd_count()
+    for _ in range(5):
+        init, parent, child = stack_dump.create_stack_dump_channel()
+        with monkeypatch.context() as patch:
+            if failure == "open":
 
-    ready = stack_dump.install_stack_dump_signal_handler(init)
-    assert not ready.ready
-    assert ready.failure_class == "file_open_failed"
-    assert sentinel.read_text() == "keep me"
+                def fail_open(*_args, **_kwargs):
+                    raise OSError(errno.EOPNOTSUPP, "unsupported mount")
 
-    sentinel.unlink()
-    stack_dump.close_stack_dump_directory(init, directory_fd)
+                patch.setattr(stack_dump.os, "open", fail_open)
+            if failure == "register":
+
+                def fail_register(*_args, **_kwargs):
+                    raise RuntimeError("registration failed")
+
+                patch.setattr(stack_dump.faulthandler, "register", fail_register)
+            if failure == "full":
+                with contextlib.suppress(BlockingIOError):
+                    while True:
+                        child.send(b"x")
+            if failure == "closed":
+                parent.close()
+            result = stack_dump.install_stack_dump_signal_handler(init, child)
+            assert not result.ready and not stack_dump.stack_dump_signal_handler_ready()
+        parent.close()
+        child.close()
+    assert _fd_count() == before
 
 
-@pytest.mark.skipif(not hasattr(signal, "SIGUSR1"), reason="requires SIGUSR1")
+@linux
 @pytest.mark.parametrize(
-    ("target", "failure_class"),
-    [("fdopen", "file_wrap_failed"), ("register", "handler_registration_failed")],
+    "error", [errno.EINVAL, errno.EISDIR, errno.ENOSYS, errno.ENOSPC, errno.EACCES]
 )
-def test_partial_producer_failure_unlinks_only_created_file(
-    tmp_path, monkeypatch, target, failure_class
-):
+def test_unsupported_kernel_or_mount_has_no_fallback(monkeypatch, error):
     monkeypatch.setenv(stack_dump.ENABLED_ENV, "true")
-    init, directory_fd = stack_dump.create_stack_dump_init(str(tmp_path))
-    if target == "fdopen":
-        monkeypatch.setattr(
-            stack_dump.os,
-            "fdopen",
-            lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError()),
-        )
-    else:
-        monkeypatch.setattr(
-            stack_dump.faulthandler,
-            "register",
-            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError()),
-        )
+    init, parent, child = stack_dump.create_stack_dump_channel()
+    calls = []
 
-    ready = stack_dump.install_stack_dump_signal_handler(init)
+    def fail_open(path, flags, mode):
+        calls.append((path, flags, mode))
+        raise OSError(error, "injected")
 
-    assert not ready.ready
-    assert ready.failure_class == failure_class
-    assert list(Path(init.directory_path).iterdir()) == []
-    stack_dump.close_stack_dump_directory(init, directory_fd)
+    monkeypatch.setattr(stack_dump.os, "open", fail_open)
+    assert not stack_dump.install_stack_dump_signal_handler(init, child).ready
+    assert len(calls) == 1 and calls[0][0] == "/dev/shm"
+    parent.close()
 
 
-@pytest.mark.skipif(not hasattr(signal, "SIGUSR1"), reason="requires SIGUSR1")
-def test_producer_does_not_unlink_an_inode_replacement(tmp_path, monkeypatch):
-    monkeypatch.setenv(stack_dump.ENABLED_ENV, "true")
-    init, directory_fd = stack_dump.create_stack_dump_init(str(tmp_path))
-    ready = stack_dump.install_stack_dump_signal_handler(init)
-    assert ready.ready
-    artifact = Path(init.directory_path, ready.relative_basename)
-    original = artifact.with_suffix(".original")
-    artifact.rename(original)
-    artifact.write_text("replacement")
-    artifact.chmod(0o600)
-
-    stack_dump.close_stack_dump_signal_handler(unlink=True)
-    assert artifact.read_text() == "replacement"
-
-    artifact.unlink()
-    original.unlink()
-    stack_dump.close_stack_dump_directory(init, directory_fd)
-
-
-@pytest.mark.skipif(not hasattr(signal, "SIGUSR1"), reason="requires SIGUSR1")
-def test_collector_rejects_and_preserves_an_inode_replacement(tmp_path, monkeypatch):
-    monkeypatch.setenv(stack_dump.ENABLED_ENV, "true")
-    init, directory_fd = stack_dump.create_stack_dump_init(str(tmp_path))
-    ready = stack_dump.install_stack_dump_signal_handler(init)
-    assert ready.ready
-    stack_dump.close_stack_dump_signal_handler(unlink=False)
-    artifact = Path(init.directory_path, ready.relative_basename)
-    original = artifact.with_suffix(".original")
-    artifact.rename(original)
-    artifact.write_text("replacement")
-    artifact.chmod(0o600)
-
-    collected = stack_dump.collect_stack_dump_artifact(init, ready, directory_fd)
-    assert collected.failure_class == "artifact_identity_mismatch"
-    assert artifact.read_text() == "replacement"
-
-    artifact.unlink()
-    original.unlink()
-    stack_dump.close_stack_dump_directory(init, directory_fd)
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="POSIX unlinkat cannot atomically compare an inode and unlink its pathname",
+@linux
+@pytest.mark.parametrize(
+    "case",
+    [
+        "missing",
+        "two",
+        "many",
+        "truncated",
+        "json",
+        "pid",
+        "token",
+        "inode",
+        "mode",
+        "linked",
+        "pipe",
+        "credentials",
+        "writeonly",
+    ],
 )
-def test_cleanup_does_not_unlink_a_replacement_swapped_after_identity_check(tmp_path, monkeypatch):
-    monkeypatch.setenv(stack_dump.ENABLED_ENV, "true")
-    init, directory_fd = stack_dump.create_stack_dump_init(str(tmp_path))
-    ready = stack_dump.install_stack_dump_signal_handler(init)
-    assert ready.ready
-    stack_dump.close_stack_dump_signal_handler(unlink=False)
-
-    replacement_name = "replacement"
-    real_unlink = os.unlink
-    swapped = False
-
-    def swap_after_stat(path, *args, **kwargs):
-        nonlocal swapped
-        if not swapped and path == ready.relative_basename and kwargs.get("dir_fd") == directory_fd:
-            swapped = True
-            os.rename(
-                ready.relative_basename,
-                replacement_name,
-                src_dir_fd=directory_fd,
-                dst_dir_fd=directory_fd,
+def test_receiver_rejects_bad_transfer_without_leaks(tmp_path, case):
+    before = _fd_count()
+    for _ in range(3):
+        init, parent, child = stack_dump.create_stack_dump_channel()
+        fd = _anonymous()
+        extra = None
+        if case == "pipe":
+            os.close(fd)
+            fd, extra = os.pipe()
+        if case in ("linked", "writeonly"):
+            os.close(fd)
+            fd = os.open(tmp_path / "fixture", os.O_CREAT | os.O_RDWR, 0o600)
+            if case == "writeonly":
+                os.close(fd)
+                fd = os.open(tmp_path / "fixture", os.O_WRONLY)
+                os.unlink(tmp_path / "fixture")
+        ready = _ready(fd, init.episode_token)
+        if case == "inode":
+            ready = replace(ready, file_inode=ready.file_inode + 1)
+        if case == "mode":
+            os.fchmod(fd, 0o640)
+        if case == "pid":
+            ready = replace(ready, child_pid=os.getpid() + 1)
+        if case == "token":
+            ready = replace(ready, episode_token="b" * 32)
+        payload = json.dumps(asdict(ready)).encode()
+        if case == "json":
+            payload = b"not json"
+        if case == "truncated":
+            payload += b" " * 2000
+        if case == "credentials":
+            parent.setsockopt(socket.SOL_SOCKET, socket.SO_PASSCRED, 0)
+        if case != "missing":
+            count = 2 if case == "two" else 64 if case == "many" else 1
+            child.sendmsg(
+                [payload], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", [fd] * count))]
             )
-            replacement_fd = os.open(
-                ready.relative_basename,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-                0o600,
-                dir_fd=directory_fd,
-            )
-            os.close(replacement_fd)
-        return real_unlink(path, *args, **kwargs)
-
-    monkeypatch.setattr(stack_dump.os, "unlink", swap_after_stat)
-    try:
-        stack_dump._unlink_owned_file(directory_fd, ready)
-        assert not swapped or os.path.exists(Path(init.directory_path, ready.relative_basename))
-    finally:
-        monkeypatch.setattr(stack_dump.os, "unlink", real_unlink)
-        for name in (ready.relative_basename, replacement_name):
-            with contextlib.suppress(FileNotFoundError):
-                real_unlink(name, dir_fd=directory_fd)
-        stack_dump.close_stack_dump_directory(init, directory_fd)
-
-
-def test_ready_validation_rejects_wrong_pid_without_removing_artifact(tmp_path, monkeypatch):
-    if not hasattr(signal, "SIGUSR1"):
-        pytest.skip("requires SIGUSR1")
-    monkeypatch.setenv(stack_dump.ENABLED_ENV, "true")
-    init, directory_fd = stack_dump.create_stack_dump_init(str(tmp_path))
-    ready = stack_dump.install_stack_dump_signal_handler(init)
-    assert ready.ready
-    try:
-        rejected = stack_dump.validate_stack_dump_ready(
-            init, ready, expected_pid=os.getpid() + 1, directory_fd=directory_fd
+        validated, received = stack_dump.receive_stack_dump_fd(
+            parent, init, ready, expected_pid=os.getpid()
         )
-        assert not rejected.ready
-        assert rejected.failure_class == "identity_mismatch"
-        assert Path(init.directory_path, ready.relative_basename).exists()
-    finally:
-        stack_dump.close_stack_dump_signal_handler(unlink=True)
-        stack_dump.close_stack_dump_directory(init, directory_fd)
+        assert not validated.ready and received is None
+        os.close(fd)
+        if extra is not None:
+            os.close(extra)
+        child.close()
+    assert _fd_count() == before
 
 
-def test_fifo_replacement_returns_without_blocking_validation_or_collection(tmp_path):
-    probe = """
-import asyncio
-import json
-import os
-import sys
+@linux
+def test_pread_bound_shared_offset_and_read_failure_cleanup(monkeypatch):
+    fd = _anonymous()
+    os.write(fd, b"x" * (3 * stack_dump.MAX_STACK_DUMP_BYTES))
+    ready = _ready(fd, "a" * 32)
+    duplicate = os.dup(fd)
+    original_offset = os.lseek(duplicate, 0, os.SEEK_CUR)
+    actual_pread = os.pread
+    reads = []
 
-from livekit.agents.ipc import stack_dump
+    def measured_read(actual_fd, size, offset):
+        value = actual_pread(actual_fd, size, offset)
+        reads.append(len(value))
+        return value
 
+    monkeypatch.setattr(stack_dump.os, "pread", measured_read)
+    result = stack_dump.collect_stack_dump_fd(fd, ready)
+    assert result.bytes_read == 65536 and result.truncated and sum(reads) == 65537
+    assert os.lseek(duplicate, 0, os.SEEK_CUR) == original_offset
+    with pytest.raises(OSError):
+        os.fstat(fd)
 
-async def main():
-    os.environ[stack_dump.ENABLED_ENV] = "true"
-    init, directory_fd = stack_dump.create_stack_dump_init(sys.argv[1])
-    ready = stack_dump.install_stack_dump_signal_handler(init)
-    assert ready.ready
-    stack_dump.close_stack_dump_signal_handler(unlink=False)
-    artifact = os.path.join(init.directory_path, ready.relative_basename)
-    os.unlink(artifact)
-    os.mkfifo(artifact, 0o600)
+    def fail_read(*_args):
+        raise OSError(errno.EIO, "injected")
 
-    timer_fired = []
-    asyncio.get_running_loop().call_soon(timer_fired.append, "fired")
-    validated = stack_dump.validate_stack_dump_ready(
-        init, ready, expected_pid=os.getpid(), directory_fd=directory_fd
+    monkeypatch.setattr(stack_dump.os, "pread", fail_read)
+    assert (
+        stack_dump.collect_stack_dump_fd(duplicate, ready).failure_class == "artifact_read_failed"
     )
-    collected = stack_dump.collect_stack_dump_artifact(init, ready, directory_fd)
-    await asyncio.sleep(0)
-    print(json.dumps({
-        "validated": validated.ready,
-        "collection_failure": collected.failure_class,
-        "timer_fired": timer_fired == ["fired"],
-    }))
-    os.unlink(artifact)
-    stack_dump.close_stack_dump_directory(init, directory_fd)
+    with pytest.raises(OSError):
+        os.fstat(duplicate)
 
 
-asyncio.run(main())
-"""
-    result = subprocess.run(
-        [sys.executable, "-c", probe, str(tmp_path)],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=1,
-    )
-    assert json.loads(result.stdout) == {
-        "validated": False,
-        "collection_failure": "artifact_identity_mismatch",
-        "timer_fired": True,
-    }
-
-
-class _FakeTimerHandle:
+class _FakeHandle:
     def __init__(self, callback):
-        self.callback = callback
-        self.cancelled = False
+        self.callback, self.cancelled = callback, False
 
     def cancel(self):
         self.cancelled = True
@@ -341,380 +335,69 @@ class _FakeLoop:
         self.calls = []
 
     def call_later(self, delay, callback):
-        handle = _FakeTimerHandle(callback)
+        handle = _FakeHandle(callback)
         self.calls.append((delay, handle))
         return handle
 
 
-def test_trigger_allows_only_one_request_per_child():
+def test_trigger_one_request_recovery_close_and_short_deadline():
     loop = _FakeLoop()
     requests = []
     trigger = stack_dump.PongStallDumpTrigger(
-        loop, ping_timeout=60.0, request_dump=lambda: requests.append("sent")
+        loop, ping_timeout=60, request_dump=lambda: requests.append(1)
     )
-
     trigger.arm()
     first = loop.calls[-1][1]
     trigger.pong()
-    assert first.cancelled
-    assert len(loop.calls) == 2
-
+    assert first.cancelled and loop.calls[-1][0] == 59.5
     loop.calls[-1][1].callback()
-    assert requests == ["sent"]
     trigger.pong()
     trigger.arm()
-    assert len(loop.calls) == 2
-
-
-def test_trigger_close_cancels_pending_request():
-    loop = _FakeLoop()
-    requests = []
-    trigger = stack_dump.PongStallDumpTrigger(
-        loop, ping_timeout=60.0, request_dump=lambda: requests.append("sent")
+    assert requests == [1] and len(loop.calls) == 2
+    second = stack_dump.PongStallDumpTrigger(
+        loop, ping_timeout=60, request_dump=lambda: requests.append(2)
     )
-    trigger.arm()
-    handle = loop.calls[-1][1]
-    trigger.close()
-    handle.callback()
-    assert handle.cancelled
-    assert requests == []
+    second.arm()
+    second.close()
+    loop.calls[-1][1].callback()
+    assert requests == [1]
+    short = stack_dump.PongStallDumpTrigger(loop, ping_timeout=0.5, request_dump=lambda: None)
+    short.arm()
+    assert len(loop.calls) == 3
 
 
-def test_trigger_is_inert_when_lead_time_is_not_available():
-    loop = _FakeLoop()
-    trigger = stack_dump.PongStallDumpTrigger(loop, ping_timeout=0.5, request_dump=lambda: None)
-    trigger.arm()
-    assert loop.calls == []
+def test_protected_kill_method_remains_synchronous_and_unchanged():
+    import ast
 
-
-async def _unused_main_task(_receiver):
-    return None
-
-
-def _initialize_client(init, initialize_fnc):
-    parent_socket, child_socket = socket.socketpair()
-    parent = duplex_unix._Duplex.open(parent_socket)
-    client = proc_client._ProcClient(
-        child_socket,
-        None,
-        initialize_fnc,
-        _unused_main_task,
+    source = inspect.getsource(supervised_proc)
+    node = next(
+        n
+        for n in ast.walk(ast.parse(source))
+        if isinstance(n, ast.FunctionDef) and n.name == "_send_kill_signal"
     )
-    failure = []
-
-    def run():
-        try:
-            client.initialize()
-        except Exception as error:
-            failure.append(error)
-
-    thread = threading.Thread(target=run)
-    thread.start()
-    channel.send_message(parent, proto.InitializeRequest(stack_dump_init=init))
-    response = channel.recv_message(parent, proto.IPC_MESSAGES)
-    thread.join(timeout=1)
-    assert not thread.is_alive()
-    parent.close()
-    return response, failure
+    digest = hashlib.sha256(ast.get_source_segment(source, node).encode()).hexdigest()
+    assert digest == "cc435cedf3ac7483e84b93cdbe9ffd1cb1ba2d08debfa8c85c1b05ab8905a0ee"
+    assert not inspect.iscoroutinefunction(supervised_proc.SupervisedProc._send_kill_signal)
 
 
-@pytest.mark.skipif(not hasattr(signal, "SIGUSR1"), reason="requires SIGUSR1")
-def test_proc_client_reports_ready_only_after_handler_install(tmp_path, monkeypatch):
-    monkeypatch.setenv(stack_dump.ENABLED_ENV, "true")
-    init, directory_fd = stack_dump.create_stack_dump_init(str(tmp_path))
-    callback_saw_handler = []
-
-    def initialize(_request, _client):
-        callback_saw_handler.append(stack_dump.stack_dump_signal_handler_ready())
-
-    response, failure = _initialize_client(init, initialize)
-    try:
-        assert failure == []
-        assert response.error == ""
-        assert response.stack_dump_ready.ready
-        assert callback_saw_handler == [True]
-    finally:
-        stack_dump.close_stack_dump_signal_handler(unlink=True)
-        stack_dump.close_stack_dump_directory(init, directory_fd)
-
-
-@pytest.mark.skipif(not hasattr(signal, "SIGUSR1"), reason="requires SIGUSR1")
-def test_proc_client_init_failure_removes_only_its_owned_artifact(tmp_path, monkeypatch):
-    monkeypatch.setenv(stack_dump.ENABLED_ENV, "true")
-    init, directory_fd = stack_dump.create_stack_dump_init(str(tmp_path))
-
-    def initialize(_request, _client):
-        raise RuntimeError("user init failed")
-
-    response, failure = _initialize_client(init, initialize)
-    assert response.error == "user init failed"
-    assert response.stack_dump_ready == stack_dump.StackDumpReady.disabled()
-    assert len(failure) == 1
-    assert list(Path(init.directory_path).iterdir()) == []
-    stack_dump.close_stack_dump_directory(init, directory_fd)
-
-
-class _AliveProcess:
-    def is_alive(self):
-        return True
-
-
-class _TestSupervisedProc(supervised_proc.SupervisedProc):
-    def _create_process(self, _cch, _log_cch):
-        raise NotImplementedError
-
-    async def _main_task(self, _ipc_ch):
-        return None
-
-
-@pytest.mark.asyncio
-async def test_supervisor_requests_at_most_one_dump_per_child(monkeypatch):
-    loop = __import__("asyncio").get_running_loop()
-    process = _TestSupervisedProc(
-        initialize_timeout=1,
-        close_timeout=1,
-        memory_warn_mb=0,
-        memory_limit_mb=0,
-        ping_interval=2.5,
-        ping_timeout=60,
-        high_ping_threshold=0.5,
-        mp_ctx=None,
-        loop=loop,
-    )
-    process._proc = _AliveProcess()
-    process._pid = 1234
-    process._last_pong_monotonic = time.monotonic() - 59.5
-    process._stack_dump_ready = stack_dump.StackDumpReady(
-        ready=True,
-        child_pid=1234,
-        episode_token="b" * 32,
-        relative_basename=f"stack-1234-{'b' * 32}.dump",
-    )
-    signals = []
-    monkeypatch.setattr(supervised_proc.os, "kill", lambda pid, sig: signals.append((pid, sig)))
-
-    process._request_stack_dump()
-    process._request_stack_dump()
-
-    assert signals == [(1234, signal.SIGUSR1)]
-    assert process._stack_dump_request_record is not None
-    assert process._stack_dump_request_record.child_pid == 1234
-    assert process._stack_dump_request_record.episode_token == "b" * 32
-    assert process._stack_dump_request_record.sent
-    assert process._stack_dump_request_record.failure_class is None
-
-
-@pytest.mark.asyncio
-async def test_supervisor_never_signals_without_positive_readiness(monkeypatch):
-    loop = __import__("asyncio").get_running_loop()
-    process = _TestSupervisedProc(
-        initialize_timeout=1,
-        close_timeout=1,
-        memory_warn_mb=0,
-        memory_limit_mb=0,
-        ping_interval=2.5,
-        ping_timeout=60,
-        high_ping_threshold=0.5,
-        mp_ctx=None,
-        loop=loop,
-    )
-    process._proc = _AliveProcess()
-    process._pid = 1234
-    process._last_pong_monotonic = time.monotonic()
-    signals = []
-    monkeypatch.setattr(supervised_proc.os, "kill", lambda pid, sig: signals.append((pid, sig)))
-
-    process._request_stack_dump()
-
-    assert signals == []
-    assert process._stack_dump_request_record is None
-
-
-def _new_test_supervisor(loop):
-    return _TestSupervisedProc(
-        initialize_timeout=1,
-        close_timeout=1,
-        memory_warn_mb=0,
-        memory_limit_mb=0,
-        ping_interval=2.5,
-        ping_timeout=60,
-        high_ping_threshold=0.5,
-        mp_ctx=None,
-        loop=loop,
-    )
-
-
-@pytest.mark.asyncio
-async def test_initialize_sends_sink_identity_and_requires_validated_readiness(monkeypatch):
-    loop = __import__("asyncio").get_running_loop()
-    process = _new_test_supervisor(loop)
-    process._proc = SimpleNamespace(name="job_proc")
-    process._pid = 1234
-    process._pch = object()
-    init = stack_dump.StackDumpInit(
-        enabled=True,
-        directory_path="/dev/shm/private",
-        directory_device=10,
-        directory_inode=11,
-        directory_owner_uid=os.geteuid(),
-        directory_mode=0o700,
-        episode_token="c" * 32,
-    )
-    ready = stack_dump.StackDumpReady(
-        ready=True,
-        child_pid=1234,
-        episode_token="c" * 32,
-        relative_basename=f"stack-1234-{'c' * 32}.dump",
-        directory_device=10,
-        directory_inode=11,
-        file_device=12,
-        file_inode=13,
-        owner_uid=os.geteuid(),
-        mode=0o600,
-        link_count=1,
-    )
-    sent = []
-    monkeypatch.setattr(supervised_proc, "stack_dump_enabled", lambda: True)
-    monkeypatch.setattr(supervised_proc, "create_stack_dump_init", lambda: (init, 99))
-    monkeypatch.setattr(
-        supervised_proc,
-        "validate_stack_dump_ready",
-        lambda actual_init, actual_ready, **kwargs: ready,
-    )
-
-    async def send(_channel, message):
-        sent.append(message)
-
-    async def receive(_channel, _messages):
-        return proto.InitializeResponse(stack_dump_ready=ready)
-
-    monkeypatch.setattr(supervised_proc.channel, "asend_message", send)
-    monkeypatch.setattr(supervised_proc.channel, "arecv_message", receive)
-
-    await process.initialize()
-
-    assert sent[0].stack_dump_init == init
-    assert process._stack_dump_init == init
-    assert process._stack_dump_directory_fd == 99
-    assert process._stack_dump_ready == ready
-
-
-@pytest.mark.asyncio
-async def test_initialize_disabled_creates_no_sink(monkeypatch):
-    loop = __import__("asyncio").get_running_loop()
-    process = _new_test_supervisor(loop)
-    process._proc = SimpleNamespace(name="job_proc")
-    process._pid = 1234
-    process._pch = object()
-    sent = []
-    monkeypatch.setattr(supervised_proc, "stack_dump_enabled", lambda: False)
-
-    def unexpected_create():
-        raise AssertionError("disabled mode created a sink")
-
-    monkeypatch.setattr(supervised_proc, "create_stack_dump_init", unexpected_create)
-
-    async def send(_channel, message):
-        sent.append(message)
-
-    async def receive(_channel, _messages):
-        return proto.InitializeResponse()
-
-    monkeypatch.setattr(supervised_proc.channel, "asend_message", send)
-    monkeypatch.setattr(supervised_proc.channel, "arecv_message", receive)
-
-    await process.initialize()
-
-    assert sent[0].stack_dump_init is None
-    assert process._stack_dump_init is None
-    assert process._stack_dump_directory_fd is None
-    assert process._stack_dump_ready == stack_dump.StackDumpReady.disabled()
-
-
-@pytest.mark.asyncio
-async def test_supervisor_arms_only_after_readiness_and_never_rearms_after_request(monkeypatch):
-    real_loop = __import__("asyncio").get_running_loop()
-    process = _new_test_supervisor(real_loop)
-    fake_loop = _FakeLoop()
-    process._loop = fake_loop
-    process._proc = _AliveProcess()
-    process._pid = 1234
-    process._stack_dump_ready = stack_dump.StackDumpReady(
-        ready=True,
-        child_pid=1234,
-        episode_token="d" * 32,
-        relative_basename=f"stack-1234-{'d' * 32}.dump",
-    )
-    signals = []
-    monkeypatch.setattr(supervised_proc.os, "kill", lambda pid, sig: signals.append((pid, sig)))
-
-    process._arm_stack_dump_trigger()
-    assert fake_loop.calls[0][0] == 59.5
-    fake_loop.calls[0][1].callback()
-    assert signals == [(1234, signal.SIGUSR1)]
-
-    process._on_stack_dump_pong()
-    process._arm_stack_dump_trigger()
-    assert len(fake_loop.calls) == 1
-
-
-@pytest.mark.asyncio
-async def test_post_exit_collection_emits_bounded_attributed_record(tmp_path, monkeypatch, caplog):
-    monkeypatch.setenv(stack_dump.ENABLED_ENV, "true")
-    init, directory_fd = stack_dump.create_stack_dump_init(str(tmp_path))
-    ready = stack_dump.install_stack_dump_signal_handler(init)
-    assert ready.ready
-    os.kill(os.getpid(), signal.SIGUSR1)
-    stack_dump.close_stack_dump_signal_handler(unlink=False)
-
-    loop = __import__("asyncio").get_running_loop()
-    process = _new_test_supervisor(loop)
-    process._pid = os.getpid()
-    process._stack_dump_init = init
-    process._stack_dump_directory_fd = directory_fd
-    process._stack_dump_ready = ready
-    process._stack_dump_request_record = stack_dump.StackDumpRequestRecord(
-        child_pid=os.getpid(),
-        episode_token=init.episode_token,
-        requested_at_unix_ms=123456,
-        last_pong_age_ms=59500,
-        sent=True,
-    )
-
-    with caplog.at_level("WARNING", logger="livekit.agents"):
-        process._collect_and_emit_stack_dump()
-
-    events = {getattr(record, "diagnostic_event", None): record for record in caplog.records}
-    assert "job_stack_dump_requested" in events
-    collected = events["job_stack_dump_collected"]
-    assert collected.child_pid == os.getpid()
-    assert collected.episode_token == init.episode_token
-    assert collected.dump_requested_at_unix_ms == 123456
-    assert collected.bytes_read <= 65_536
-    assert "test_post_exit_collection_emits_bounded_attributed_record" in collected.stack_text
-    assert process._stack_dump_directory_fd is None
-    assert not Path(init.directory_path).exists()
-
-
-def _read_fixture_event(process, timeout=2.0):
-    assert process.stdout is not None
+def _event(process, timeout=2):
     readable, _, _ = select.select([process.stdout], [], [], timeout)
     if not readable:
         raise TimeoutError("fixture emitted no event")
     line = process.stdout.readline()
     if not line:
-        raise EOFError(f"fixture exited with {process.poll()}")
+        raise EOFError(f"fixture exited: {process.poll()}")
     return json.loads(line)
 
 
-def _send_fixture_command(process, command):
-    assert process.stdin is not None
+def _command(process, command):
     process.stdin.write(command + "\n")
     process.stdin.flush()
 
 
-def _start_fixture(tmp_path, label="alpha", *, saturate_stderr=False, heartbeat=False):
-    init, directory_fd = stack_dump.create_stack_dump_init(str(tmp_path))
+@contextlib.contextmanager
+def _fixture(label="alpha", *, saturate=False, heartbeat=False, stderr_sink=False):
+    init, parent, child = stack_dump.create_stack_dump_channel()
     command = [
         sys.executable,
         str(FIXTURE),
@@ -722,241 +405,369 @@ def _start_fixture(tmp_path, label="alpha", *, saturate_stderr=False, heartbeat=
         json.dumps(asdict(init)),
         "--label",
         label,
+        "--transfer-fd",
+        str(child.fileno()),
     ]
-    if saturate_stderr:
+    if saturate:
         command.append("--saturate-stderr")
     if heartbeat:
         command.append("--heartbeat")
-    environment = os.environ.copy()
-    environment[stack_dump.ENABLED_ENV] = "true"
+    if stderr_sink:
+        command.append("--stderr-sink")
     process = subprocess.Popen(
         command,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE if saturate_stderr else subprocess.DEVNULL,
+        stderr=subprocess.PIPE if saturate else subprocess.DEVNULL,
         text=True,
         bufsize=1,
-        env=environment,
+        pass_fds=(child.fileno(),),
+        env={**os.environ, stack_dump.ENABLED_ENV: "true"},
     )
-    event = _read_fixture_event(process)
-    assert event["event"] == "ready"
-    ready = stack_dump.StackDumpReady(**event["identity"])
-    ready = stack_dump.validate_stack_dump_ready(
-        init, ready, expected_pid=process.pid, directory_fd=directory_fd
-    )
-    assert ready.ready
-    return process, init, directory_fd, ready, event
+    child.close()
+    state = {"fd": None}
+    try:
+        event = _event(process)
+        assert event["event"] == "ready", event
+        ready = stack_dump.StackDumpReady(**event["identity"]) if not stderr_sink else None
+        if ready is not None:
+            ready, state["fd"] = stack_dump.receive_stack_dump_fd(
+                parent, init, ready, expected_pid=process.pid
+            )
+            assert ready.ready
+        yield process, state, ready, event
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=3)
+        for stream in (process.stdin, process.stdout, process.stderr):
+            if stream is not None:
+                stream.close()
+        if state["fd"] is not None:
+            os.close(state["fd"])
+        parent.close()
 
 
-def _wait_for_complete_dump(init, ready, expected_frame, timeout=0.25):
-    deadline = time.monotonic() + timeout
-    artifact = Path(init.directory_path, ready.relative_basename)
-    while time.monotonic() < deadline:
-        text = artifact.read_text(errors="replace")
-        if "Current thread" in text and expected_frame in text:
-            return
-        time.sleep(0.001)
-    raise TimeoutError("real child stack dump did not complete")
+def _collect_fixture(process, state, ready, *, kill=False):
+    if kill:
+        process.kill()
+    else:
+        _command(process, "stop")
+    process.wait(timeout=3)
+    fd, state["fd"] = state["fd"], None
+    return stack_dump.collect_stack_dump_fd(fd, ready)
 
 
-def _stop_and_collect(process, init, directory_fd, ready):
-    _send_fixture_command(process, "stop")
-    process.wait(timeout=2)
-    assert process.returncode == 0
-    collected = stack_dump.collect_stack_dump_artifact(init, ready, directory_fd)
-    stack_dump.close_stack_dump_directory(init, directory_fd)
-    return collected
-
-
-def test_real_child_recovers_with_saturated_stderr(tmp_path):
-    process, init, directory_fd, ready, event = _start_fixture(tmp_path, saturate_stderr=True)
-    started = time.monotonic_ns()
-    os.kill(process.pid, signal.SIGUSR1)
-    _wait_for_complete_dump(init, ready, "alpha_unique_anchor")
-    _send_fixture_command(process, "recover")
-    pong = _read_fixture_event(process, timeout=0.25)
-    latency_ms = (time.monotonic_ns() - started) / 1_000_000
-    assert pong["event"] == "pong"
-    assert latency_ms < 250
-    collected = _stop_and_collect(process, init, directory_fd, ready)
-    assert event["stderr_filled_bytes"] > 0
-    assert collected.failure_class is None
-    assert "alpha_unique_anchor" in collected.stack_text
-    assert collected.stack_text.count("alpha_unique_anchor") >= 3
-    assert process.stderr is not None
-    stderr = process.stderr.read()
-    assert "Current thread" not in stderr
-
-
-def test_inherited_stderr_control_blocks_recovery_when_pipe_is_full():
-    environment = os.environ.copy()
-    environment[stack_dump.ENABLED_ENV] = "true"
-    process = subprocess.Popen(
-        [
-            sys.executable,
-            str(FIXTURE),
-            "--init",
-            "{}",
-            "--label",
-            "stderr-control",
-            "--saturate-stderr",
-            "--stderr-sink",
-        ],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-        env=environment,
-    )
-    event = _read_fixture_event(process)
-    assert event["event"] == "ready"
-    assert event["stderr_filled_bytes"] > 0
-    os.kill(process.pid, signal.SIGUSR1)
-    _send_fixture_command(process, "recover")
-    with pytest.raises(TimeoutError):
-        _read_fixture_event(process, timeout=0.1)
-    os.kill(process.pid, signal.SIGKILL)
-    process.wait(timeout=2)
-
-
-def test_two_real_children_are_attributed_while_third_child_keeps_progress(tmp_path):
-    alpha = _start_fixture(tmp_path, "alpha")
-    beta = _start_fixture(tmp_path, "beta")
-    progress = _start_fixture(tmp_path, "progress", heartbeat=True)
-    alpha_process, alpha_init, alpha_fd, alpha_ready, _ = alpha
-    beta_process, beta_init, beta_fd, beta_ready, _ = beta
-    progress_process, progress_init, progress_fd, progress_ready, _ = progress
-
-    os.kill(alpha_process.pid, signal.SIGUSR1)
-    os.kill(beta_process.pid, signal.SIGUSR1)
-    _wait_for_complete_dump(alpha_init, alpha_ready, "alpha_unique_anchor")
-    _wait_for_complete_dump(beta_init, beta_ready, "beta_unique_anchor")
-    _send_fixture_command(alpha_process, "recover")
-    _send_fixture_command(beta_process, "recover")
-    assert _read_fixture_event(alpha_process, 0.25)["event"] == "pong"
-    assert _read_fixture_event(beta_process, 0.25)["event"] == "pong"
-
-    alpha_collection = _stop_and_collect(alpha_process, alpha_init, alpha_fd, alpha_ready)
-    emitted_at = time.monotonic_ns()
-    progress_after_emission = False
-    for _ in range(20):
-        progress_event = _read_fixture_event(progress_process, 0.25)
-        if progress_event["event"] == "pong" and progress_event["monotonic_ns"] > emitted_at:
-            progress_after_emission = True
-            break
-    beta_collection = _stop_and_collect(beta_process, beta_init, beta_fd, beta_ready)
-    progress_collection = _stop_and_collect(
-        progress_process, progress_init, progress_fd, progress_ready
-    )
-
-    assert progress_after_emission
-    assert "alpha_unique_anchor" in alpha_collection.stack_text
-    assert "beta_unique_anchor" not in alpha_collection.stack_text
-    assert "beta_unique_anchor" in beta_collection.stack_text
-    assert "alpha_unique_anchor" not in beta_collection.stack_text
-    assert progress_collection.bytes_read == 0
-
-
-def test_real_held_interpreter_produces_a_dump(tmp_path):
-    process, init, directory_fd, ready, _ = _start_fixture(tmp_path)
-    _send_fixture_command(process, "hold")
-    assert _read_fixture_event(process)["event"] == "holding"
-    os.kill(process.pid, signal.SIGUSR1)
-    _wait_for_complete_dump(init, ready, "hold_interpreter", timeout=10)
-    os.kill(process.pid, signal.SIGKILL)
-    process.wait(timeout=2)
-    collected = stack_dump.collect_stack_dump_artifact(init, ready, directory_fd)
-    stack_dump.close_stack_dump_directory(init, directory_fd)
-    assert collected.failure_class is None
-    assert "hold_interpreter" in collected.stack_text
-
-
-def test_real_capture_latency_budget(tmp_path):
-    count = int(os.getenv("STACK_DUMP_STRESS_COUNT", "5"))
-    latencies = []
-    for index in range(count):
-        process, init, directory_fd, ready, _ = _start_fixture(tmp_path, f"stress-{index}")
-        started = time.monotonic_ns()
+@linux
+def test_real_child_recovers_with_saturated_stderr():
+    with _fixture(saturate=True) as (process, state, ready, event):
+        started = time.monotonic()
         os.kill(process.pid, signal.SIGUSR1)
-        _wait_for_complete_dump(init, ready, "shared_anchor")
-        _send_fixture_command(process, "recover")
-        assert _read_fixture_event(process, 0.25)["event"] == "pong"
-        latencies.append((time.monotonic_ns() - started) / 1_000_000)
-        _stop_and_collect(process, init, directory_fd, ready)
-    assert len(latencies) == count
-    assert max(latencies) < 250
+        _command(process, "recover")
+        assert _event(process, 0.25)["event"] == "pong"
+        assert time.monotonic() - started < 0.25
+        result = _collect_fixture(process, state, ready)
+        assert event["stderr_filled_bytes"] > 0
+        assert result.stack_text.count("alpha_unique_anchor") >= 3
+        assert "Current thread" not in process.stderr.read()
 
 
-def test_protected_kill_method_remains_synchronous_and_unchanged():
-    source = inspect.getsource(supervised_proc.SupervisedProc._send_kill_signal)
-    assert not inspect.iscoroutinefunction(supervised_proc.SupervisedProc._send_kill_signal)
-    assert "SIGUSR1" not in source
-    assert "sleep" not in source
+@linux
+def test_inherited_stderr_control_blocks_recovery_when_pipe_is_full():
+    with _fixture(saturate=True, stderr_sink=True) as (process, _state, _ready, event):
+        assert event["stderr_filled_bytes"] > 0
+        os.kill(process.pid, signal.SIGUSR1)
+        _command(process, "recover")
+        with pytest.raises(TimeoutError):
+            _event(process, 0.1)
 
 
-@pytest.mark.asyncio
-@pytest.mark.skipif(not Path("/dev/shm").is_dir(), reason="requires Linux /dev/shm")
-async def test_process_job_disabled_mode_starts_without_diagnostic_resources(monkeypatch):
-    fixtures = str(FIXTURE.parent)
-    monkeypatch.syspath_prepend(fixtures)
-    from stack_dump_child import initialize_job_process, unused_job_entrypoint
+@linux
+def test_two_children_attributed_while_third_child_progresses():
+    with (
+        _fixture("alpha") as alpha,
+        _fixture("beta") as beta,
+        _fixture("progress", heartbeat=True) as third,
+    ):
+        for process, _state, _ready, _event_data in (alpha, beta):
+            os.kill(process.pid, signal.SIGUSR1)
+            _command(process, "recover")
+            assert _event(process, 0.25)["event"] == "pong"
+        a = _collect_fixture(*alpha[:3])
+        emitted_at = time.monotonic_ns()
+        for _ in range(30):
+            if _event(third[0], 0.25)["monotonic_ns"] > emitted_at:
+                break
+        else:
+            raise AssertionError("unrelated child failed to progress")
+        b = _collect_fixture(*beta[:3])
+        c = _collect_fixture(*third[:3])
+        assert "alpha_unique_anchor" in a.stack_text and "beta_unique_anchor" not in a.stack_text
+        assert "beta_unique_anchor" in b.stack_text and "alpha_unique_anchor" not in b.stack_text
+        assert c.bytes_read == 0
 
-    monkeypatch.delenv(stack_dump.ENABLED_ENV, raising=False)
-    loop = __import__("asyncio").get_running_loop()
-    executor = ProcJobExecutor(
-        initialize_process_fnc=initialize_job_process,
-        job_entrypoint_fnc=unused_job_entrypoint,
+
+@linux
+def test_real_held_interpreter_dump_survives_sigkill():
+    with _fixture() as (process, state, ready, _event_data):
+        _command(process, "hold")
+        assert _event(process)["event"] == "holding"
+        os.kill(process.pid, signal.SIGUSR1)
+        time.sleep(0.1)
+        result = _collect_fixture(process, state, ready, kill=True)
+        assert "hold_interpreter" in result.stack_text
+
+
+@linux
+def test_real_capture_latency_budget():
+    count = int(os.getenv("STACK_DUMP_STRESS_COUNT", "5"))
+    before = _fd_count()
+    for index in range(count):
+        with _fixture(f"stress-{index}") as (process, state, ready, _event_data):
+            started = time.monotonic()
+            os.kill(process.pid, signal.SIGUSR1)
+            _command(process, "recover")
+            assert _event(process, 0.25)["event"] == "pong"
+            assert time.monotonic() - started < 0.25
+            assert "shared_anchor" in _collect_fixture(process, state, ready).stack_text
+    assert _fd_count() == before
+
+
+def _executor(
+    monkeypatch, *, enabled=True, context="spawn", initializer="initialize_job_process", timeout=5
+):
+    monkeypatch.syspath_prepend(str(FIXTURE.parent))
+    import stack_dump_child
+
+    monkeypatch.setenv(stack_dump.ENABLED_ENV, "true" if enabled else "false")
+    return ProcJobExecutor(
+        initialize_process_fnc=getattr(stack_dump_child, initializer),
+        job_entrypoint_fnc=stack_dump_child.unused_job_entrypoint,
         inference_executor=None,
-        initialize_timeout=5,
+        initialize_timeout=timeout,
         close_timeout=1,
         memory_warn_mb=0,
         memory_limit_mb=0,
-        ping_interval=0.1,
-        ping_timeout=2,
+        ping_interval=0.05,
+        ping_timeout=1.2,
         high_ping_threshold=1,
-        mp_ctx=__import__("multiprocessing").get_context("spawn"),
-        loop=loop,
+        mp_ctx=mp.get_context(context),
+        loop=asyncio.get_running_loop(),
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_real_process_job_disabled_or_unsupported_is_inert(monkeypatch, enabled):
+    if enabled and LINUX:
+        monkeypatch.setattr(
+            "livekit.agents.ipc.job_proc_executor.stack_dump_supported", lambda: False
+        )
+    executor = _executor(monkeypatch, enabled=enabled)
     await executor.start()
     try:
         await executor.initialize()
         assert executor._stack_dump_init is None
-        assert executor._stack_dump_directory_fd is None
-        assert executor._stack_dump_trigger is None
+        assert (
+            executor._stack_dump_pch is executor._stack_dump_cch is executor._stack_dump_fd is None
+        )
+        assert executor._stack_dump_trigger is executor._stack_dump_request_record is None
+        executor._request_stack_dump()
         assert executor._stack_dump_request_record is None
     finally:
-        await executor.kill()
+        await asyncio.wait_for(executor.kill(), 5)
 
 
+@linux
 @pytest.mark.asyncio
-@pytest.mark.skipif(not Path("/dev/shm").is_dir(), reason="requires Linux /dev/shm")
-async def test_process_job_initialization_round_trips_real_handler(monkeypatch):
-    fixtures = str(FIXTURE.parent)
-    monkeypatch.syspath_prepend(fixtures)
-    from stack_dump_child import initialize_job_process, unused_job_entrypoint
-
-    monkeypatch.setenv(stack_dump.ENABLED_ENV, "true")
-    loop = __import__("asyncio").get_running_loop()
-    executor = ProcJobExecutor(
-        initialize_process_fnc=initialize_job_process,
-        job_entrypoint_fnc=unused_job_entrypoint,
-        inference_executor=None,
-        initialize_timeout=5,
-        close_timeout=1,
-        memory_warn_mb=0,
-        memory_limit_mb=0,
-        ping_interval=0.1,
-        ping_timeout=2,
-        high_ping_threshold=1,
-        mp_ctx=__import__("multiprocessing").get_context("spawn"),
-        loop=loop,
-    )
+@pytest.mark.parametrize("context", ["spawn", "forkserver", "fork"])
+async def test_real_process_job_transfer_one_request_post_exit_record(monkeypatch, caplog, context):
+    executor = _executor(monkeypatch, context=context)
     await executor.start()
     try:
         await executor.initialize()
-        assert executor._stack_dump_ready.ready
-        assert executor._stack_dump_ready.child_pid == executor.pid
+        await asyncio.sleep(0.1)
+        assert (
+            executor._stack_dump_ready.ready
+            and executor._stack_dump_ready.child_pid == executor.pid
+        )
+        assert executor._stack_dump_pch is executor._stack_dump_cch is None
+        assert executor._stack_dump_fd is not None
+        with caplog.at_level("WARNING", logger="livekit.agents"):
+            executor._request_stack_dump()
+            first = executor._stack_dump_request_record
+            executor._request_stack_dump()
+            assert executor._stack_dump_request_record is first and first.sent
+            await asyncio.sleep(0.1)
+            assert not any(
+                getattr(r, "diagnostic_event", "") == "job_stack_dump_collected"
+                for r in caplog.records
+            )
+            await executor.kill()
+        records = [
+            r
+            for r in caplog.records
+            if getattr(r, "diagnostic_event", "") == "job_stack_dump_collected"
+        ]
+        assert len(records) == 1 and records[0].child_pid == executor.pid
+        assert "Current thread" in records[0].stack_text and records[0].bytes_read <= 65536
+        assert executor._stack_dump_fd is None
+        executor._collect_and_emit_stack_dump()
+        assert (
+            len(
+                [
+                    r
+                    for r in caplog.records
+                    if getattr(r, "diagnostic_event", "") == "job_stack_dump_collected"
+                ]
+            )
+            == 1
+        )
     finally:
-        await executor.kill()
-    assert executor._stack_dump_request_record is None
+        if executor.exitcode is None:
+            await asyncio.wait_for(executor.kill(), 5)
+
+
+@linux
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["cancel", "timeout", "crash", "error", "no_init"])
+async def test_real_process_job_init_failure_releases_queued_fd(monkeypatch, failure):
+    # Warm multiprocessing's persistent resource helper before measuring.
+    warm = _executor(monkeypatch, enabled=False)
+    await warm.start()
+    await warm.initialize()
+    await warm.kill()
+    before = _fd_count()
+    for _ in range(3):
+        initializer = {
+            "cancel": "stall_job_process",
+            "timeout": "stall_job_process",
+            "crash": "crash_job_process",
+            "error": "fail_job_process",
+        }.get(failure, "initialize_job_process")
+        executor = _executor(
+            monkeypatch, initializer=initializer, timeout=0.5 if failure == "timeout" else 5
+        )
+        await executor.start()
+        if failure == "no_init":
+            await asyncio.wait_for(executor.kill(), 5)
+        else:
+            receiver = executor._stack_dump_pch
+            task = asyncio.create_task(executor.initialize())
+            if failure == "cancel":
+                for _ in range(400):
+                    if select.select([receiver], [], [], 0)[0]:
+                        break
+                    await asyncio.sleep(0.005)
+                else:
+                    raise AssertionError("child never queued the descriptor")
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            else:
+                expected = (
+                    asyncio.TimeoutError
+                    if failure == "timeout"
+                    else (duplex_unix.DuplexClosed if failure == "crash" else RuntimeError)
+                )
+                with pytest.raises(expected):
+                    await task
+            await asyncio.wait_for(executor.kill(), 5)
+        assert (
+            executor._stack_dump_pch is executor._stack_dump_cch is executor._stack_dump_fd is None
+        )
+    assert _fd_count() == before
+
+
+@linux
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["full", "closed", "setup"])
+async def test_real_process_job_side_failure_preserves_normal_initialization(monkeypatch, failure):
+    from livekit.agents.ipc import job_proc_executor
+
+    real_create = job_proc_executor.create_stack_dump_channel
+
+    def create():
+        if failure == "setup":
+            raise OSError(errno.EMFILE, "injected socketpair failure")
+        init, parent, child = real_create()
+        if failure == "full":
+            with contextlib.suppress(BlockingIOError):
+                while True:
+                    child.send(b"x")
+        return init, parent, child
+
+    monkeypatch.setattr(job_proc_executor, "create_stack_dump_channel", create)
+    executor = _executor(monkeypatch)
+    await executor.start()
+    try:
+        if failure == "closed":
+            executor._stack_dump_pch.close()
+        await executor.initialize()
+        await asyncio.sleep(0.2)
+        assert not executor._stack_dump_ready.ready
+        assert executor._stack_dump_fd is None and not executor.killed
+        await executor.aclose()
+        assert executor.exitcode == 0
+    finally:
+        if executor.exitcode is None:
+            await executor.kill()
+
+
+@linux
+@pytest.mark.asyncio
+async def test_forked_job_does_not_retain_other_child_descriptor(monkeypatch):
+    first = _executor(monkeypatch)
+    await first.start()
+    second = None
+    try:
+        await first.initialize()
+        info = os.fstat(first._stack_dump_fd)
+        second = _executor(monkeypatch, context="fork")
+        await second.start()
+        await second.initialize()
+        inherited = []
+        for entry in Path(f"/proc/{second.pid}/fd").iterdir():
+            with contextlib.suppress(FileNotFoundError):
+                actual = entry.stat()
+                if (actual.st_dev, actual.st_ino) == (info.st_dev, info.st_ino):
+                    inherited.append(entry.name)
+        assert inherited == []
+        assert first._stack_dump_fd is not None
+    finally:
+        if second is not None:
+            await second.kill()
+        await first.kill()
+
+
+@linux
+@pytest.mark.asyncio
+async def test_real_supervisor_recovery_and_original_second_stall_deadline(monkeypatch, caplog):
+    executor = _executor(monkeypatch)
+    await executor.start()
+    try:
+        await executor.initialize()
+        await asyncio.sleep(0.15)
+        os.kill(executor.pid, signal.SIGSTOP)
+        for _ in range(100):
+            if executor._stack_dump_request_record is not None:
+                break
+            await asyncio.sleep(0.01)
+        assert executor._stack_dump_request_record.sent
+        os.kill(executor.pid, signal.SIGCONT)
+        await asyncio.sleep(0.6)
+        assert not executor.killed and executor.exitcode is None
+        first = executor._stack_dump_request_record
+        os.kill(executor.pid, signal.SIGSTOP)
+        started = time.monotonic()
+        with caplog.at_level("WARNING", logger="livekit.agents"):
+            await asyncio.wait_for(executor.join(), 2)
+        elapsed = time.monotonic() - started
+        assert 0.95 < elapsed < 1.45
+        assert executor.killed and executor._stack_dump_request_record is first
+        assert any(
+            getattr(r, "diagnostic_event", "") == "job_stack_dump_collected" for r in caplog.records
+        )
+    finally:
+        if executor.exitcode is None:
+            await asyncio.wait_for(executor.kill(), 5)

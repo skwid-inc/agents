@@ -54,10 +54,18 @@ class ProcStartArgs:
     mp_cch: socket.socket
     log_cch: socket.socket
     user_arguments: Any | None = None
+    stack_dump_cch: socket.socket | None = None
+    stack_dump_parent_cch: socket.socket | None = None
 
 
 def proc_main(args: ProcStartArgs) -> None:
     from .proc_client import _ProcClient
+    from .stack_dump import close_inherited_stack_dump_resources
+
+    close_inherited_stack_dump_resources(args.stack_dump_cch)
+    # Explicitly close the redundant endpoint, including under fork inheritance.
+    if args.stack_dump_parent_cch is not None:
+        args.stack_dump_parent_cch.close()
 
     job_proc = _JobProc(
         args.initialize_process_fnc,
@@ -71,6 +79,7 @@ def proc_main(args: ProcStartArgs) -> None:
         args.log_cch,
         job_proc.initialize,
         job_proc.entrypoint,
+        stack_dump_cch=args.stack_dump_cch,
     )
 
     client.initialize_logger()
