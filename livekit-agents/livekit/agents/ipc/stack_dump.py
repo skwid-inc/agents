@@ -102,6 +102,10 @@ def _file_flags(access: int) -> int:
     return access | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
 
 
+def _read_file_flags() -> int:
+    return _file_flags(os.O_RDONLY) | getattr(os, "O_NONBLOCK", 0)
+
+
 def _valid_directory(info: os.stat_result, init: StackDumpInit) -> bool:
     return (
         stat.S_ISDIR(info.st_mode)
@@ -287,7 +291,7 @@ def validate_stack_dump_ready(
             return StackDumpReady.disabled("identity_mismatch")
         artifact_fd = os.open(
             ready.relative_basename,
-            _file_flags(os.O_RDONLY),
+            _read_file_flags(),
             dir_fd=directory_fd,
         )
         try:
@@ -312,7 +316,7 @@ def collect_stack_dump_artifact(
             return StackDumpCollection(failure_class="directory_identity_mismatch")
         artifact_fd = os.open(
             ready.relative_basename,
-            _file_flags(os.O_RDONLY),
+            _read_file_flags(),
             dir_fd=directory_fd,
         )
         if not _valid_file(os.fstat(artifact_fd), ready):

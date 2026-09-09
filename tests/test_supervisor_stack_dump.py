@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import inspect
 import json
 import os
@@ -209,6 +210,52 @@ def test_collector_rejects_and_preserves_an_inode_replacement(tmp_path, monkeypa
     stack_dump.close_stack_dump_directory(init, directory_fd)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="POSIX unlinkat cannot atomically compare an inode and unlink its pathname",
+)
+def test_cleanup_does_not_unlink_a_replacement_swapped_after_identity_check(tmp_path, monkeypatch):
+    monkeypatch.setenv(stack_dump.ENABLED_ENV, "true")
+    init, directory_fd = stack_dump.create_stack_dump_init(str(tmp_path))
+    ready = stack_dump.install_stack_dump_signal_handler(init)
+    assert ready.ready
+    stack_dump.close_stack_dump_signal_handler(unlink=False)
+
+    replacement_name = "replacement"
+    real_unlink = os.unlink
+    swapped = False
+
+    def swap_after_stat(path, *args, **kwargs):
+        nonlocal swapped
+        if not swapped and path == ready.relative_basename and kwargs.get("dir_fd") == directory_fd:
+            swapped = True
+            os.rename(
+                ready.relative_basename,
+                replacement_name,
+                src_dir_fd=directory_fd,
+                dst_dir_fd=directory_fd,
+            )
+            replacement_fd = os.open(
+                ready.relative_basename,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+                dir_fd=directory_fd,
+            )
+            os.close(replacement_fd)
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(stack_dump.os, "unlink", swap_after_stat)
+    try:
+        stack_dump._unlink_owned_file(directory_fd, ready)
+        assert not swapped or os.path.exists(Path(init.directory_path, ready.relative_basename))
+    finally:
+        monkeypatch.setattr(stack_dump.os, "unlink", real_unlink)
+        for name in (ready.relative_basename, replacement_name):
+            with contextlib.suppress(FileNotFoundError):
+                real_unlink(name, dir_fd=directory_fd)
+        stack_dump.close_stack_dump_directory(init, directory_fd)
+
+
 def test_ready_validation_rejects_wrong_pid_without_removing_artifact(tmp_path, monkeypatch):
     if not hasattr(signal, "SIGUSR1"):
         pytest.skip("requires SIGUSR1")
@@ -226,6 +273,58 @@ def test_ready_validation_rejects_wrong_pid_without_removing_artifact(tmp_path, 
     finally:
         stack_dump.close_stack_dump_signal_handler(unlink=True)
         stack_dump.close_stack_dump_directory(init, directory_fd)
+
+
+def test_fifo_replacement_returns_without_blocking_validation_or_collection(tmp_path):
+    probe = """
+import asyncio
+import json
+import os
+import sys
+
+from livekit.agents.ipc import stack_dump
+
+
+async def main():
+    os.environ[stack_dump.ENABLED_ENV] = "true"
+    init, directory_fd = stack_dump.create_stack_dump_init(sys.argv[1])
+    ready = stack_dump.install_stack_dump_signal_handler(init)
+    assert ready.ready
+    stack_dump.close_stack_dump_signal_handler(unlink=False)
+    artifact = os.path.join(init.directory_path, ready.relative_basename)
+    os.unlink(artifact)
+    os.mkfifo(artifact, 0o600)
+
+    timer_fired = []
+    asyncio.get_running_loop().call_soon(timer_fired.append, "fired")
+    validated = stack_dump.validate_stack_dump_ready(
+        init, ready, expected_pid=os.getpid(), directory_fd=directory_fd
+    )
+    collected = stack_dump.collect_stack_dump_artifact(init, ready, directory_fd)
+    await asyncio.sleep(0)
+    print(json.dumps({
+        "validated": validated.ready,
+        "collection_failure": collected.failure_class,
+        "timer_fired": timer_fired == ["fired"],
+    }))
+    os.unlink(artifact)
+    stack_dump.close_stack_dump_directory(init, directory_fd)
+
+
+asyncio.run(main())
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", probe, str(tmp_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=1,
+    )
+    assert json.loads(result.stdout) == {
+        "validated": False,
+        "collection_failure": "artifact_identity_mismatch",
+        "timer_fired": True,
+    }
 
 
 class _FakeTimerHandle:
