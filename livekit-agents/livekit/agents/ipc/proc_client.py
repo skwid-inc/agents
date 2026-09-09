@@ -19,6 +19,11 @@ from .proto import (
     PingRequest,
     PongResponse,
 )
+from .stack_dump import (
+    StackDumpReady,
+    close_stack_dump_signal_handler,
+    install_stack_dump_signal_handler,
+)
 
 
 class _ProcClient:
@@ -57,11 +62,21 @@ class _ProcClient:
             )
 
             self._init_req = first_req
+            stack_dump_ready = StackDumpReady.disabled()
+            if self._init_req.stack_dump_init is not None:
+                stack_dump_ready = install_stack_dump_signal_handler(self._init_req.stack_dump_init)
             try:
                 self._initialize_fnc(self._init_req, self)
-                send_message(cch, InitializeResponse())
+                send_message(cch, InitializeResponse(stack_dump_ready=stack_dump_ready))
             except Exception as e:
-                send_message(cch, InitializeResponse(error=str(e)))
+                close_stack_dump_signal_handler(unlink=True)
+                send_message(
+                    cch,
+                    InitializeResponse(
+                        error=str(e),
+                        stack_dump_ready=StackDumpReady.disabled(),
+                    ),
+                )
                 raise
 
             self._initialized = True
@@ -91,6 +106,7 @@ class _ProcClient:
         except KeyboardInterrupt:
             pass
         finally:
+            close_stack_dump_signal_handler(unlink=False)
             if self._log_handler is not None:
                 self._log_handler.close()
 
